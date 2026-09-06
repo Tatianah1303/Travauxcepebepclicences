@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 
 import '../../models/enseignant.dart';
 import '../../models/membre_previsionnel.dart';
+import '../../models/item_liste.dart';
 import '../../models/quota_membre.dart';
 import '../../services/sqlite_service.dart';
 import '../../services/app_session.dart';
@@ -22,6 +23,7 @@ class _ListeMembresScreenState extends State<ListeMembresScreen> {
   List<MembrePrevisionnel> _membres = [];
   List<Enseignant> _enseignants = [];
   String? _filtreRole; // null = tous les rôles
+  Map<String, String> _nomsCentres = {};
 
   int get _anneeSession => DateTime.now().year;
   String get _codeEtab => AppSession.instance.codeEtab ?? '';
@@ -40,6 +42,18 @@ class _ListeMembresScreenState extends State<ListeMembresScreen> {
     final tousMembres = await SqliteService.instance.listerMembres(
       anneeSession: _anneeSession,
     );
+    final centres = <ItemListe>[
+      ...await SqliteService.instance.listerItems('centreEcritCepe'),
+      ...await SqliteService.instance.listerItems('centreCorrectionCepe'),
+      ...await SqliteService.instance.listerItems('centreEcritBepc'),
+      ...await SqliteService.instance.listerItems('centreCorrectionBepc'),
+    ];
+    final nomsCentres = <String, String>{
+      for (final c in centres)
+        if (c.champs['code'] != null)
+          c.champs['code']!:
+              (c.champs['libelle'] ?? c.champs['nom'] ?? c.champs['code']!),
+    };
     final membresEtab = tousMembres
         .where((m) => matriculesEtab.contains(m.matriculeEnseignant))
         .toList();
@@ -47,6 +61,7 @@ class _ListeMembresScreenState extends State<ListeMembresScreen> {
     setState(() {
       _enseignants = enseignants;
       _membres = membresEtab;
+      _nomsCentres = nomsCentres;
     });
   }
 
@@ -57,6 +72,9 @@ class _ListeMembresScreenState extends State<ListeMembresScreen> {
       return null;
     }
   }
+
+  String _nomCentre(String? code) =>
+      code == null || code.isEmpty ? '-' : (_nomsCentres[code] ?? code);
 
   List<MembrePrevisionnel> get _membresFiltres {
     if (_filtreRole == null) return _membres;
@@ -84,8 +102,8 @@ class _ListeMembresScreenState extends State<ListeMembresScreen> {
             e?.fonction ?? '-',
             libelleRole(m.role),
             m.etat,
-            m.codeCentreEcrit ?? '-',
-            m.codeCentreCorrection ?? '-',
+            _nomCentre(m.codeCentreEcrit),
+            _nomCentre(m.codeCentreCorrection),
           ];
         }).toList(),
       );
@@ -139,13 +157,10 @@ class _ListeMembresScreenState extends State<ListeMembresScreen> {
             _ligneInfo('Rôle', libelleRole(membre.role)),
             _ligneInfo('État', membre.etat),
             _ligneInfo('Téléphone', enseignant?.phone ?? '-'),
-            _ligneInfo(
-              'Centre d\'écrit',
-              membre.codeCentreEcrit ?? 'Non attribué',
-            ),
+            _ligneInfo('Centre d\'écrit', _nomCentre(membre.codeCentreEcrit)),
             _ligneInfo(
               'Centre de correction',
-              membre.codeCentreCorrection ?? 'Non attribué',
+              _nomCentre(membre.codeCentreCorrection),
             ),
             const Divider(height: 32),
             const Text(

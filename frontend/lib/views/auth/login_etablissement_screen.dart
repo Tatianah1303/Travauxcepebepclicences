@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../services/sqlite_service.dart';
 import '../../services/app_session.dart';
 import '../dashboard/home_dashboard_screen.dart';
+import '../admin/login_admin_screen.dart';
 
 /// Écran de connexion. Un seul champ : le code établissement (le long
 /// code, ex: 326020302). Pas de mot de passe séparé, pas de rôle — c'est
@@ -112,6 +113,13 @@ class _LoginEtablissementScreenState extends State<LoginEtablissementScreen> {
                           )
                         : const Text('Se connecter'),
                   ),
+                ),
+                const SizedBox(height: 12),
+                TextButton(
+                  onPressed: () => Navigator.of(context).push(
+                    MaterialPageRoute(builder: (_) => const LoginAdminScreen()),
+                  ),
+                  child: const Text('Connexion Administration CISCO'),
                 ),
               ],
             ),

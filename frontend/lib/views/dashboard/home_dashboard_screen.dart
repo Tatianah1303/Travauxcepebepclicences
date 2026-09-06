@@ -4,6 +4,7 @@ import 'cepe_dashboard_screen.dart';
 import 'bepc_dashboard_screen.dart';
 import '../../services/app_session.dart';
 import '../auth/login_etablissement_screen.dart';
+import '../chat/chat_thread_screen.dart';
 
 /// Écran d'accueil : le point d'entrée après connexion. Affiche le nom de
 /// l'établissement connecté en haut. Deux gros boutons : CEPE et BEPC.
@@ -18,6 +19,7 @@ class HomeDashboardScreen extends StatelessWidget {
       appBar: AppBar(
         title: Text(nomEtab),
         actions: [
+          IconButton(icon: const Icon(Icons.chat), tooltip: 'Chat avec l’administration', onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => ChatThreadScreen(codeEtab: AppSession.instance.codeEtab!, expediteurActuel: 'etablissement', titre: 'Administration CISCO')))),
           IconButton(
             icon: const Icon(Icons.logout),
             tooltip: 'Déconnexion',

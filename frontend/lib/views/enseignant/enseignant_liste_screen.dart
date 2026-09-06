@@ -29,20 +29,32 @@ class _EnseignantListeScreenState extends State<EnseignantListeScreen> {
     setState(() => _enseignants = liste);
   }
 
-  Future<void> _ouvrirFormulaire() async {
+  Future<void> _ouvrirFormulaire({Enseignant? existant}) async {
     final formKey = GlobalKey<FormState>();
-    final matriculeController = TextEditingController();
-    final nomController = TextEditingController();
-    final prenomController = TextEditingController();
-    final phoneController = TextEditingController();
-    final adresseController = TextEditingController();
-    String fonction = 'Enseignant';
+    final matriculeController = TextEditingController(
+      text: existant?.matricule ?? '',
+    );
+    final nomController = TextEditingController(text: existant?.nom ?? '');
+    final prenomController = TextEditingController(
+      text: existant?.prenom ?? '',
+    );
+    final phoneController = TextEditingController(text: existant?.phone ?? '');
+    final adresseController = TextEditingController(
+      text: existant?.adresse ?? '',
+    );
+    final cinController = TextEditingController(text: existant?.cin ?? '');
+    String sexe = existant?.sexe ?? 'G';
+    String fonction = existant?.fonction ?? 'Enseignant';
 
     final resultat = await showDialog<bool>(
       context: context,
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setDialogState) => AlertDialog(
-          title: const Text('Ajouter un enseignant'),
+          title: Text(
+            existant == null
+                ? 'Ajouter un enseignant'
+                : 'Modifier l’enseignant',
+          ),
           content: Form(
             key: formKey,
             child: SingleChildScrollView(
@@ -51,9 +63,36 @@ class _EnseignantListeScreenState extends State<EnseignantListeScreen> {
                 children: [
                   TextFormField(
                     controller: matriculeController,
-                    decoration: const InputDecoration(labelText: 'Matricule'),
+                    decoration: const InputDecoration(
+                      labelText: 'Matricule (6 chiffres)',
+                    ),
+                    keyboardType: TextInputType.number,
+                    maxLength: 6,
                     validator: (v) =>
-                        (v == null || v.trim().isEmpty) ? 'Obligatoire' : null,
+                        (v == null || !RegExp(r'^\d{6}$').hasMatch(v.trim()))
+                        ? 'Le matricule doit contenir exactement 6 chiffres'
+                        : null,
+                  ),
+                  TextFormField(
+                    controller: cinController,
+                    decoration: const InputDecoration(
+                      labelText: 'Numéro CIN (12 chiffres) *',
+                    ),
+                    keyboardType: TextInputType.number,
+                    maxLength: 12,
+                    validator: (v) =>
+                        (v == null || !RegExp(r'^\d{12}$').hasMatch(v.trim()))
+                        ? 'Le CIN doit contenir exactement 12 chiffres'
+                        : null,
+                  ),
+                  DropdownButtonFormField<String>(
+                    initialValue: sexe,
+                    decoration: const InputDecoration(labelText: 'Sexe'),
+                    items: const [
+                      DropdownMenuItem(value: 'G', child: Text('Homme')),
+                      DropdownMenuItem(value: 'F', child: Text('Femme')),
+                    ],
+                    onChanged: (v) => setDialogState(() => sexe = v ?? 'G'),
                   ),
                   TextFormField(
                     controller: nomController,
@@ -129,9 +168,15 @@ class _EnseignantListeScreenState extends State<EnseignantListeScreen> {
       adresse: adresseController.text.trim(),
       codeEtab: AppSession.instance.codeEtab ?? '',
       fonction: fonction,
+      cin: cinController.text.trim(),
+      sexe: sexe,
     );
 
-    await SqliteService.instance.insererEnseignant(enseignant);
+    if (existant == null) {
+      await SqliteService.instance.insererEnseignant(enseignant);
+    } else {
+      await SqliteService.instance.modifierEnseignant(enseignant);
+    }
     await _rafraichir();
   }
 
@@ -166,10 +211,21 @@ class _EnseignantListeScreenState extends State<EnseignantListeScreen> {
                     ),
                   ),
                   title: Text('${e.nom} ${e.prenom}'),
-                  subtitle: Text('${e.fonction} — ${e.phone}'),
-                  trailing: IconButton(
-                    icon: const Icon(Icons.delete, color: Colors.red),
-                    onPressed: () => _supprimer(e),
+                  subtitle: Text(
+                    '${e.fonction} — CIN: ${e.cin ?? '-'} — Sexe: ${e.sexe ?? '-'} — ${e.phone}',
+                  ),
+                  trailing: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      IconButton(
+                        icon: const Icon(Icons.edit, color: Colors.blue),
+                        onPressed: () => _ouvrirFormulaire(existant: e),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.delete, color: Colors.red),
+                        onPressed: () => _supprimer(e),
+                      ),
+                    ],
                   ),
                 );
               },

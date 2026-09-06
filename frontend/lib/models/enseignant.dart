@@ -14,6 +14,8 @@ class Enseignant {
 
   /// 'Directeur' ou 'Enseignant'
   final String fonction;
+  final String? cin;
+  final String? sexe;
 
   const Enseignant({
     required this.matricule,
@@ -23,6 +25,8 @@ class Enseignant {
     required this.adresse,
     required this.codeEtab,
     required this.fonction,
+    this.cin,
+    this.sexe,
   });
 
   String get nomComplet => '$nom $prenom';
@@ -35,6 +39,8 @@ class Enseignant {
     'adresse': adresse,
     'codeEtab': codeEtab,
     'fonction': fonction,
+    'cin': cin,
+    'sexe': sexe,
   };
 
   factory Enseignant.fromMap(Map<String, Object?> map) => Enseignant(
@@ -45,5 +51,7 @@ class Enseignant {
     adresse: map['adresse'] as String,
     codeEtab: map['codeEtab'] as String,
     fonction: map['fonction'] as String,
+    cin: map['cin'] as String?,
+    sexe: map['sexe'] as String?,
   );
 }

@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../listes/listes_menu_screen.dart';
 import '../candidat/formulaire_bepc_screen.dart';
 import '../candidat/liste_candidats_screen.dart';
+import 'statistiques_examen_screen.dart';
 import '../salle/formulaire_salle_screen.dart';
 import '../membre/membre_hub_screen.dart';
 
@@ -70,9 +71,11 @@ class BepcDashboardScreen extends StatelessWidget {
             titre: 'Statistiques BEPC',
             icone: Icons.bar_chart,
             couleur: Colors.brown,
-            onTap: () {
-              // TODO : écran de statistiques
-            },
+            onTap: () => Navigator.of(context).push(
+              MaterialPageRoute(
+                builder: (_) => const StatistiquesExamenScreen(pourCepe: false),
+              ),
+            ),
           ),
         ],
       ),

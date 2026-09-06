@@ -1,16 +1,11 @@
 import 'package:flutter/material.dart';
 
 import 'services/seed_service.dart';
-import 'services/sqlite_service.dart';
 import 'views/auth/login_etablissement_screen.dart';
+import 'config/theme.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-
-  // ⚠️ LIGNE TEMPORAIRE — à supprimer après le premier lancement réussi.
-  // Efface la base locale existante pour forcer la recréation des tables
-  // avec la nouvelle structure (ex: ajout du champ codecorrection).
-  await SqliteService.instance.reinitialiserBase();
 
   // Charge les listes réelles (établissements, écoles d'origine, CEG/lycée
   // d'accueil, centres, groupes, langues, sports...) dans la base locale,
@@ -25,9 +20,10 @@ class MyApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const MaterialApp(
+    return MaterialApp(
       debugShowCheckedModeBanner: false,
-      home: LoginEtablissementScreen(),
+      theme: AppTheme.theme,
+      home: const LoginEtablissementScreen(),
     );
   }
 }

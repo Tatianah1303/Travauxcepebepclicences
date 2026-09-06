@@ -37,6 +37,7 @@ class _FormulaireBepcScreenState extends State<FormulaireBepcScreen> {
   final _numeroAnneePrecedenteController = TextEditingController();
 
   DateTime? _dateNaissance;
+  final _dateNaissanceController = TextEditingController();
   String _sexe = 'G'; // 'G' = Garçon (Masculin), 'F' = Fille (Féminin)
   bool _handicap = false;
   String? _typeHandicap;
@@ -45,6 +46,8 @@ class _FormulaireBepcScreenState extends State<FormulaireBepcScreen> {
   String? _langue;
   String? _codeEcoleOrigine;
   String? _codeLyceeAccueil;
+  String? _codeCentreEcrit;
+  String? _codeCentreCorrection;
   int _neeVert = 0;
 
   bool _eps = false;
@@ -55,6 +58,8 @@ class _FormulaireBepcScreenState extends State<FormulaireBepcScreen> {
 
   List<ItemListe> _ecolesOrigine = [];
   List<ItemListe> _lyceesAccueil = [];
+  List<ItemListe> _centresEcrit = [];
+  List<ItemListe> _centresCorrection = [];
 
   bool _enregistrement = false;
 
@@ -71,9 +76,17 @@ class _FormulaireBepcScreenState extends State<FormulaireBepcScreen> {
   Future<void> _chargerListes() async {
     final ecoles = await SqliteService.instance.listerItems('ecoleOrigineBepc');
     final lycees = await SqliteService.instance.listerItems('lyceeAccueil');
+    final centresEcrit = await SqliteService.instance.listerItems(
+      'centreEcritBepc',
+    );
+    final centresCorrection = await SqliteService.instance.listerItems(
+      'centreCorrectionBepc',
+    );
     setState(() {
       _ecolesOrigine = ecoles;
       _lyceesAccueil = lycees;
+      _centresEcrit = centresEcrit;
+      _centresCorrection = centresCorrection;
     });
   }
 
@@ -82,14 +95,15 @@ class _FormulaireBepcScreenState extends State<FormulaireBepcScreen> {
     if (path != null) setState(() => _photoPath = path);
   }
 
-  Future<void> _choisirDateNaissance() async {
-    final date = await showDatePicker(
-      context: context,
-      initialDate: DateTime(2011, 1, 1),
-      firstDate: DateTime(1998),
-      lastDate: DateTime.now(),
-    );
-    if (date != null) setState(() => _dateNaissance = date);
+  void _lireDateNaissance(String v) {
+    final p = v.trim().split('/');
+    if (p.length == 3) {
+      final d = int.tryParse(p[0]);
+      final m = int.tryParse(p[1]);
+      final y = int.tryParse(p[2]);
+      if (d != null && m != null && y != null)
+        _dateNaissance = DateTime(y, m, d);
+    }
   }
 
   Future<void> _enregistrer() async {
@@ -98,8 +112,13 @@ class _FormulaireBepcScreenState extends State<FormulaireBepcScreen> {
       _erreur('Vérifiez les champs en rouge ci-dessous');
       return;
     }
+    _lireDateNaissance(_dateNaissanceController.text);
     if (_dateNaissance == null) {
-      _erreur('Choisissez la date de naissance');
+      _erreur('Saisissez la date au format jj/mm/aaaa');
+      return;
+    }
+    if (_codeCentreEcrit == null || _codeCentreCorrection == null) {
+      _erreur('Les centres d’écrit et de correction sont obligatoires');
       return;
     }
     if (_codeEcoleOrigine == null) {
@@ -164,6 +183,8 @@ class _FormulaireBepcScreenState extends State<FormulaireBepcScreen> {
       codeEcoleOrigine: _codeEcoleOrigine!,
       codeLyceeAccueil: _lyceeAccueilActif ? _codeLyceeAccueil : null,
       codeEtab: AppSession.instance.codeEtab ?? '',
+      codeCentreEcrit: _codeCentreEcrit,
+      codeCentreCorrection: _codeCentreCorrection,
       eps: _eps,
       epreuveObligatoire: _eps ? epreuveObligatoireSelonSexe(_sexe) : null,
       epreuveAuChoix: _eps ? _epreuveAuChoix : null,
@@ -234,17 +255,78 @@ class _FormulaireBepcScreenState extends State<FormulaireBepcScreen> {
             ),
             const Divider(),
 
-            TextFormField(
-              controller: _nomController,
-              decoration: const InputDecoration(labelText: 'Nom *'),
-              validator: (v) =>
-                  (v == null || v.trim().isEmpty) ? 'Obligatoire' : null,
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  child: DropdownButtonFormField<String>(
+                    initialValue: _codeCentreEcrit,
+                    decoration: const InputDecoration(
+                      labelText: 'Centre d’écrit *',
+                    ),
+                    items: _centresEcrit
+                        .map(
+                          (c) => DropdownMenuItem(
+                            value: c.champs['code'],
+                            child: Text(
+                              c.champs['libelle'] ??
+                                  c.champs['nom'] ??
+                                  c.champs['code'] ??
+                                  '',
+                            ),
+                          ),
+                        )
+                        .toList(),
+                    validator: (v) => v == null ? 'Obligatoire' : null,
+                    onChanged: (v) => setState(() => _codeCentreEcrit = v),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: DropdownButtonFormField<String>(
+                    initialValue: _codeCentreCorrection,
+                    decoration: const InputDecoration(
+                      labelText: 'Centre de correction *',
+                    ),
+                    items: _centresCorrection
+                        .map(
+                          (c) => DropdownMenuItem(
+                            value: c.champs['code'],
+                            child: Text(
+                              c.champs['libelle'] ??
+                                  c.champs['nom'] ??
+                                  c.champs['code'] ??
+                                  '',
+                            ),
+                          ),
+                        )
+                        .toList(),
+                    validator: (v) => v == null ? 'Obligatoire' : null,
+                    onChanged: (v) => setState(() => _codeCentreCorrection = v),
+                  ),
+                ),
+              ],
             ),
-            TextFormField(
-              controller: _prenomController,
-              decoration: const InputDecoration(labelText: 'Prénom *'),
-              validator: (v) =>
-                  (v == null || v.trim().isEmpty) ? 'Obligatoire' : null,
+            Row(
+              children: [
+                Expanded(
+                  child: TextFormField(
+                    controller: _nomController,
+                    decoration: const InputDecoration(labelText: 'Nom *'),
+                    validator: (v) =>
+                        (v == null || v.trim().isEmpty) ? 'Obligatoire' : null,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: TextFormField(
+                    controller: _prenomController,
+                    decoration: const InputDecoration(labelText: 'Prénom *'),
+                    validator: (v) =>
+                        (v == null || v.trim().isEmpty) ? 'Obligatoire' : null,
+                  ),
+                ),
+              ],
             ),
             TextFormField(
               controller: _lieuNaissanceController,
@@ -275,15 +357,38 @@ class _FormulaireBepcScreenState extends State<FormulaireBepcScreen> {
                   (v == null || v.trim().isEmpty) ? 'Obligatoire' : null,
             ),
 
-            ListTile(
-              contentPadding: EdgeInsets.zero,
-              title: Text(
-                _dateNaissance == null
-                    ? 'Date de naissance *'
-                    : 'Naissance : ${_dateNaissance!.day}/${_dateNaissance!.month}/${_dateNaissance!.year}',
-              ),
-              trailing: const Icon(Icons.calendar_month),
-              onTap: _choisirDateNaissance,
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  child: TextFormField(
+                    controller: _dateNaissanceController,
+                    keyboardType: TextInputType.datetime,
+                    decoration: const InputDecoration(
+                      labelText: 'Date de naissance *',
+                      hintText: 'jj/mm/aaaa',
+                    ),
+                    validator: (v) =>
+                        (v == null ||
+                            !RegExp(r'^\d{2}/\d{2}/\d{4}$').hasMatch(v.trim()))
+                        ? 'Format attendu jj/mm/aaaa'
+                        : null,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: DropdownButtonFormField<int>(
+                    initialValue: _neeVert,
+                    decoration: const InputDecoration(labelText: 'Née vert *'),
+                    items: const [
+                      DropdownMenuItem(value: 0, child: Text('0')),
+                      DropdownMenuItem(value: -1, child: Text('-1')),
+                    ],
+                    validator: (v) => v == null ? 'Obligatoire' : null,
+                    onChanged: (v) => setState(() => _neeVert = v ?? 0),
+                  ),
+                ),
+              ],
             ),
 
             const SizedBox(height: 8),
@@ -307,13 +412,6 @@ class _FormulaireBepcScreenState extends State<FormulaireBepcScreen> {
                   ),
                 ),
               ],
-            ),
-
-            SwitchListTile(
-              title: const Text('Le candidat a une copie (neeVert)'),
-              subtitle: Text(_neeVert == 1 ? 'Oui (1)' : 'Non (0)'),
-              value: _neeVert == 1,
-              onChanged: (v) => setState(() => _neeVert = v ? 1 : 0),
             ),
 
             SwitchListTile(

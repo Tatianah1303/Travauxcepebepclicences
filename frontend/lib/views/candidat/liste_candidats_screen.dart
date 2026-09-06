@@ -6,6 +6,7 @@ import '../../models/candidat_bepc.dart';
 import '../../services/sqlite_service.dart';
 import '../../services/app_session.dart';
 import '../../utils/csv_export.dart';
+import '../../utils/pdf_export.dart';
 
 /// Liste des candidats inscrits par l'établissement connecté, pour un
 /// examen donné (CEPE ou BEPC). Tableau avec photo, recherche, et export
@@ -56,7 +57,6 @@ class _ListeCandidatsScreenState extends State<ListeCandidatsScreen> {
             'Prénom',
             'Sexe',
             'Groupe',
-            'Langue',
             'École origine',
             'Handicap',
             'État',
@@ -68,7 +68,6 @@ class _ListeCandidatsScreenState extends State<ListeCandidatsScreen> {
                   c.prenom,
                   c.sexe,
                   c.groupe,
-                  c.langue ?? '-',
                   c.codeEcoleOrigine,
                   c.handicap ? 'Oui' : 'Non',
                   c.etatCandidat,
@@ -117,6 +116,72 @@ class _ListeCandidatsScreenState extends State<ListeCandidatsScreen> {
     }
   }
 
+  Future<void> _exporterPdf() async {
+    try {
+      String chemin;
+      if (widget.pourCepe) {
+        chemin = await exporterEnPdf(
+          titre: 'Candidats CEPE',
+          entetes: const [
+            'Nom',
+            'Prénom',
+            'Sexe',
+            'Groupe',
+            'École origine',
+            'État',
+          ],
+          lignes: _cepe
+              .map(
+                (c) => [
+                  c.nom,
+                  c.prenom,
+                  c.sexe,
+                  c.groupe,
+                  c.codeEcoleOrigine,
+                  c.etatCandidat,
+                ],
+              )
+              .toList(),
+        );
+      } else {
+        chemin = await exporterEnPdf(
+          titre: 'Candidats BEPC',
+          entetes: const [
+            'Nom',
+            'Prénom',
+            'Sexe',
+            'Groupe',
+            'Langue',
+            'École origine',
+            'État',
+          ],
+          lignes: _bepc
+              .map(
+                (c) => [
+                  c.nom,
+                  c.prenom,
+                  c.sexe,
+                  c.groupe,
+                  c.langue ?? '-',
+                  c.codeEcoleOrigine,
+                  c.etatCandidat,
+                ],
+              )
+              .toList(),
+        );
+      }
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Exporté (PDF) : $chemin')));
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Erreur export PDF : $e')));
+    }
+  }
+
   Widget _photoMiniature(String cheminPhoto) {
     final fichier = File(cheminPhoto);
     if (!fichier.existsSync()) {
@@ -153,6 +218,11 @@ class _ListeCandidatsScreenState extends State<ListeCandidatsScreen> {
             icon: const Icon(Icons.file_download),
             tooltip: 'Exporter en Excel (.csv)',
             onPressed: _exporter,
+          ),
+          IconButton(
+            icon: const Icon(Icons.picture_as_pdf),
+            tooltip: 'Exporter en PDF',
+            onPressed: _exporterPdf,
           ),
         ],
       ),
@@ -191,7 +261,6 @@ class _ListeCandidatsScreenState extends State<ListeCandidatsScreen> {
             DataColumn(label: Text('PHOTO')),
             DataColumn(label: Text('NOM')),
             DataColumn(label: Text('GROUPE')),
-            DataColumn(label: Text('LANGUE')),
             DataColumn(label: Text('HANDICAP')),
             DataColumn(label: Text('ÉTAT')),
           ],
@@ -202,7 +271,6 @@ class _ListeCandidatsScreenState extends State<ListeCandidatsScreen> {
                     DataCell(_photoMiniature(c.photo)),
                     DataCell(Text('${c.nom} ${c.prenom}')),
                     DataCell(Text(c.groupe)),
-                    DataCell(Text(c.langue ?? '-')),
                     DataCell(Text(c.handicap ? 'Oui' : 'Non')),
                     DataCell(Text(c.etatCandidat)),
                   ],

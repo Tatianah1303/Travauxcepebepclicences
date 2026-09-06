@@ -13,11 +13,8 @@ import '../../widgets/erreur_banniere.dart';
 /// Règles appliquées (voir modèle CandidatCepe pour le détail) :
 /// - groupe A/B/C obligatoire
 /// - CEG d'accueil actif seulement si groupe = A ou B
-/// - langue active seulement si groupe = A
-/// - handicap = Oui -> sports/EPS verrouillés, type de handicap actif
+/// - handicap = Oui -> type de handicap actif
 /// - nomPere facultatif, tout le reste obligatoire
-/// - EPS = Oui -> épreuve obligatoire auto selon sexe, épreuve au choix,
-///   épreuve collective (basket/foot)
 class FormulaireCepeScreen extends StatefulWidget {
   const FormulaireCepeScreen({super.key});
 
@@ -38,27 +35,27 @@ class _FormulaireCepeScreenState extends State<FormulaireCepeScreen> {
   final _nomMereController = TextEditingController();
 
   DateTime? _dateNaissance;
+  final _dateNaissanceController = TextEditingController();
   String _sexe = 'G'; // 'G' = Garçon (Masculin), 'F' = Fille (Féminin)
+  int _neeVert = 0;
   bool _handicap = false;
   String? _typeHandicap;
 
   String _groupe = 'A';
-  String? _langue;
   String? _codeEcoleOrigine;
   String? _codeCegAccueil;
-
-  bool _eps = false;
-  String? _epreuveAuChoix;
-  String? _epreuveCollective;
+  String? _codeCentreEcrit;
+  String? _codeCentreCorrection;
 
   String? _photoPath;
 
   List<ItemListe> _ecolesOrigine = [];
   List<ItemListe> _cegAccueils = [];
+  List<ItemListe> _centresEcrit = [];
+  List<ItemListe> _centresCorrection = [];
 
   bool _enregistrement = false;
 
-  bool get _langueActive => _groupe == 'A';
   bool get _cegAccueilActif => _groupe == 'A' || _groupe == 'B';
 
   @override
@@ -70,9 +67,17 @@ class _FormulaireCepeScreenState extends State<FormulaireCepeScreen> {
   Future<void> _chargerListes() async {
     final ecoles = await SqliteService.instance.listerItems('ecoleOrigineCepe');
     final ceg = await SqliteService.instance.listerItems('cegAccueil');
+    final centresEcrit = await SqliteService.instance.listerItems(
+      'centreEcritCepe',
+    );
+    final centresCorrection = await SqliteService.instance.listerItems(
+      'centreCorrectionCepe',
+    );
     setState(() {
       _ecolesOrigine = ecoles;
       _cegAccueils = ceg;
+      _centresEcrit = centresEcrit;
+      _centresCorrection = centresCorrection;
     });
   }
 
@@ -83,14 +88,15 @@ class _FormulaireCepeScreenState extends State<FormulaireCepeScreen> {
     }
   }
 
-  Future<void> _choisirDateNaissance() async {
-    final date = await showDatePicker(
-      context: context,
-      initialDate: DateTime(2013, 1, 1),
-      firstDate: DateTime(2000),
-      lastDate: DateTime.now(),
-    );
-    if (date != null) setState(() => _dateNaissance = date);
+  void _lireDateNaissance(String v) {
+    final p = v.trim().split('/');
+    if (p.length == 3) {
+      final d = int.tryParse(p[0]);
+      final m = int.tryParse(p[1]);
+      final y = int.tryParse(p[2]);
+      if (d != null && m != null && y != null)
+        _dateNaissance = DateTime(y, m, d);
+    }
   }
 
   Future<void> _enregistrer() async {
@@ -99,8 +105,13 @@ class _FormulaireCepeScreenState extends State<FormulaireCepeScreen> {
       _erreur('Vérifiez les champs en rouge ci-dessous');
       return;
     }
+    _lireDateNaissance(_dateNaissanceController.text);
     if (_dateNaissance == null) {
-      _erreur('Choisissez la date de naissance');
+      _erreur('Saisissez la date au format jj/mm/aaaa');
+      return;
+    }
+    if (_codeCentreEcrit == null || _codeCentreCorrection == null) {
+      _erreur('Les centres d’écrit et de correction sont obligatoires');
       return;
     }
     if (_codeEcoleOrigine == null) {
@@ -109,10 +120,6 @@ class _FormulaireCepeScreenState extends State<FormulaireCepeScreen> {
     }
     if (_handicap && _typeHandicap == null) {
       _erreur('Choisissez le type de handicap');
-      return;
-    }
-    if (_langueActive && _langue == null) {
-      _erreur('Choisissez la langue (obligatoire pour le groupe A)');
       return;
     }
     if (_photoPath == null) {
@@ -151,14 +158,14 @@ class _FormulaireCepeScreenState extends State<FormulaireCepeScreen> {
           : _nomPereController.text.trim(),
       nomMere: _nomMereController.text.trim(),
       groupe: _groupe,
-      langue: _langueActive ? _langue : null,
+      langue: null,
+      neeVert: _neeVert,
       codeEcoleOrigine: _codeEcoleOrigine!,
       codeCegAccueil: _cegAccueilActif ? _codeCegAccueil : null,
       codeEtab: AppSession.instance.codeEtab ?? '',
-      eps: _eps,
-      epreuveObligatoire: _eps ? epreuveObligatoireSelonSexe(_sexe) : null,
-      epreuveAuChoix: _eps ? _epreuveAuChoix : null,
-      epreuveCollective: _eps ? _epreuveCollective : null,
+      codeCentreEcrit: _codeCentreEcrit,
+      codeCentreCorrection: _codeCentreCorrection,
+      eps: false,
       photo: _photoPath!,
       etatCandidat: 'Inscrit',
       anneeSession: now.year,
@@ -225,17 +232,78 @@ class _FormulaireCepeScreenState extends State<FormulaireCepeScreen> {
             ),
             const Divider(),
 
-            TextFormField(
-              controller: _nomController,
-              decoration: const InputDecoration(labelText: 'Nom *'),
-              validator: (v) =>
-                  (v == null || v.trim().isEmpty) ? 'Obligatoire' : null,
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  child: DropdownButtonFormField<String>(
+                    initialValue: _codeCentreEcrit,
+                    decoration: const InputDecoration(
+                      labelText: 'Centre d’écrit *',
+                    ),
+                    items: _centresEcrit
+                        .map(
+                          (c) => DropdownMenuItem(
+                            value: c.champs['code'],
+                            child: Text(
+                              c.champs['libelle'] ??
+                                  c.champs['nom'] ??
+                                  c.champs['code'] ??
+                                  '',
+                            ),
+                          ),
+                        )
+                        .toList(),
+                    validator: (v) => v == null ? 'Obligatoire' : null,
+                    onChanged: (v) => setState(() => _codeCentreEcrit = v),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: DropdownButtonFormField<String>(
+                    initialValue: _codeCentreCorrection,
+                    decoration: const InputDecoration(
+                      labelText: 'Centre de correction *',
+                    ),
+                    items: _centresCorrection
+                        .map(
+                          (c) => DropdownMenuItem(
+                            value: c.champs['code'],
+                            child: Text(
+                              c.champs['libelle'] ??
+                                  c.champs['nom'] ??
+                                  c.champs['code'] ??
+                                  '',
+                            ),
+                          ),
+                        )
+                        .toList(),
+                    validator: (v) => v == null ? 'Obligatoire' : null,
+                    onChanged: (v) => setState(() => _codeCentreCorrection = v),
+                  ),
+                ),
+              ],
             ),
-            TextFormField(
-              controller: _prenomController,
-              decoration: const InputDecoration(labelText: 'Prénom *'),
-              validator: (v) =>
-                  (v == null || v.trim().isEmpty) ? 'Obligatoire' : null,
+            Row(
+              children: [
+                Expanded(
+                  child: TextFormField(
+                    controller: _nomController,
+                    decoration: const InputDecoration(labelText: 'Nom *'),
+                    validator: (v) =>
+                        (v == null || v.trim().isEmpty) ? 'Obligatoire' : null,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: TextFormField(
+                    controller: _prenomController,
+                    decoration: const InputDecoration(labelText: 'Prénom *'),
+                    validator: (v) =>
+                        (v == null || v.trim().isEmpty) ? 'Obligatoire' : null,
+                  ),
+                ),
+              ],
             ),
             TextFormField(
               controller: _lieuNaissanceController,
@@ -266,15 +334,38 @@ class _FormulaireCepeScreenState extends State<FormulaireCepeScreen> {
                   (v == null || v.trim().isEmpty) ? 'Obligatoire' : null,
             ),
 
-            ListTile(
-              contentPadding: EdgeInsets.zero,
-              title: Text(
-                _dateNaissance == null
-                    ? 'Date de naissance *'
-                    : 'Naissance : ${_dateNaissance!.day}/${_dateNaissance!.month}/${_dateNaissance!.year}',
-              ),
-              trailing: const Icon(Icons.calendar_month),
-              onTap: _choisirDateNaissance,
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  child: TextFormField(
+                    controller: _dateNaissanceController,
+                    keyboardType: TextInputType.datetime,
+                    decoration: const InputDecoration(
+                      labelText: 'Date de naissance *',
+                      hintText: 'jj/mm/aaaa',
+                    ),
+                    validator: (v) =>
+                        (v == null ||
+                            !RegExp(r'^\d{2}/\d{2}/\d{4}$').hasMatch(v.trim()))
+                        ? 'Format attendu jj/mm/aaaa'
+                        : null,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: DropdownButtonFormField<int>(
+                    initialValue: _neeVert,
+                    decoration: const InputDecoration(labelText: 'Née vert *'),
+                    items: const [
+                      DropdownMenuItem(value: 0, child: Text('0')),
+                      DropdownMenuItem(value: -1, child: Text('-1')),
+                    ],
+                    validator: (v) => v == null ? 'Obligatoire' : null,
+                    onChanged: (v) => setState(() => _neeVert = v ?? 0),
+                  ),
+                ),
+              ],
             ),
 
             const SizedBox(height: 8),
@@ -305,13 +396,7 @@ class _FormulaireCepeScreenState extends State<FormulaireCepeScreen> {
               value: _handicap,
               onChanged: (v) => setState(() {
                 _handicap = v;
-                if (v) {
-                  _eps = false;
-                  _epreuveAuChoix = null;
-                  _epreuveCollective = null;
-                } else {
-                  _typeHandicap = null;
-                }
+                if (!v) _typeHandicap = null;
               }),
             ),
             if (_handicap)
@@ -339,22 +424,8 @@ class _FormulaireCepeScreenState extends State<FormulaireCepeScreen> {
                   .toList(),
               onChanged: (v) => setState(() {
                 _groupe = v!;
-                if (!_langueActive) _langue = null;
                 if (!_cegAccueilActif) _codeCegAccueil = null;
               }),
-            ),
-
-            DropdownButtonFormField<String>(
-              value: _langue,
-              decoration: InputDecoration(
-                labelText: _langueActive ? 'Langue *' : 'Langue',
-              ),
-              items: langues
-                  .map((l) => DropdownMenuItem(value: l, child: Text(l)))
-                  .toList(),
-              onChanged: _langueActive
-                  ? (v) => setState(() => _langue = v)
-                  : null,
             ),
 
             DropdownButtonFormField<String>(
@@ -394,42 +465,6 @@ class _FormulaireCepeScreenState extends State<FormulaireCepeScreen> {
                   ? (v) => setState(() => _codeCegAccueil = v)
                   : null,
             ),
-
-            const Divider(),
-            SwitchListTile(
-              title: const Text('EPS (Éducation Physique et Sportive)'),
-              subtitle: _handicap
-                  ? const Text('Verrouillé (candidat handicapé)')
-                  : null,
-              value: _eps,
-              onChanged: _handicap ? null : (v) => setState(() => _eps = v),
-            ),
-            if (_eps) ...[
-              ListTile(
-                title: const Text('Épreuve obligatoire (auto)'),
-                subtitle: Text(epreuveObligatoireSelonSexe(_sexe)),
-              ),
-              DropdownButtonFormField<String>(
-                value: _epreuveAuChoix,
-                decoration: const InputDecoration(
-                  labelText: 'Épreuve au choix *',
-                ),
-                items: epreuvesAuChoixEps
-                    .map((e) => DropdownMenuItem(value: e, child: Text(e)))
-                    .toList(),
-                onChanged: (v) => setState(() => _epreuveAuChoix = v),
-              ),
-              DropdownButtonFormField<String>(
-                value: _epreuveCollective,
-                decoration: const InputDecoration(
-                  labelText: 'Épreuve collective *',
-                ),
-                items: sportsCollectifsEps
-                    .map((e) => DropdownMenuItem(value: e, child: Text(e)))
-                    .toList(),
-                onChanged: (v) => setState(() => _epreuveCollective = v),
-              ),
-            ],
 
             const SizedBox(height: 24),
             ElevatedButton(

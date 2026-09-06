@@ -64,6 +64,7 @@ class CandidatBepc {
   final String codeEtab;
 
   final String? codeCentreEcrit;
+  final String? codeCentreCorrection;
   final String? numeroSalle;
 
   final bool eps;
@@ -96,6 +97,7 @@ class CandidatBepc {
     this.codeLyceeAccueil,
     required this.codeEtab,
     this.codeCentreEcrit,
+    this.codeCentreCorrection,
     this.numeroSalle,
     this.eps = false,
     this.epreuveObligatoire,
@@ -128,6 +130,7 @@ class CandidatBepc {
       'codeLyceeAccueil': codeLyceeAccueil,
       'codeEtab': codeEtab,
       'codeCentreEcrit': codeCentreEcrit,
+      'codeCentreCorrection': codeCentreCorrection,
       'numeroSalle': numeroSalle,
       'eps': eps ? 1 : 0,
       'epreuveObligatoire': epreuveObligatoire,
@@ -162,6 +165,7 @@ class CandidatBepc {
       codeLyceeAccueil: map['codeLyceeAccueil'] as String?,
       codeEtab: map['codeEtab'] as String,
       codeCentreEcrit: map['codeCentreEcrit'] as String?,
+      codeCentreCorrection: map['codeCentreCorrection'] as String?,
       numeroSalle: map['numeroSalle'] as String?,
       eps: (map['eps'] as int) == 1,
       epreuveObligatoire: map['epreuveObligatoire'] as String?,

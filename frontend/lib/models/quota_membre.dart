@@ -40,20 +40,26 @@ class QuotaMembre {
 }
 
 /// Les 4 rôles possibles pour un membre prévisionnel.
-const List<String> rolesMembre = [
-  'Jury',
-  'Correcteur',
-  'ChefDeCentre',
-  'Securite',
-];
+const List<String> rolesMembre = ['Jury','Correcteur','ChefDeCentre','Securite','ChefDeCentreAdjoint','AssistantTechniqueInformatique','AgentSecretariat','ComiteVigilance','Secretaire','ResponsableSecuriteSujets','SurveillantSalle','SurveillantCour','AgentStade','Medecin','Interrogateur','Surveillant'];
 
 /// Libellé lisible pour chaque rôle (affichage utilisateur).
 String libelleRole(String role) {
   switch (role) {
     case 'Jury':
       return 'Jury';
-    case 'Correcteur':
-      return 'Correcteur';
+    case 'Correcteur': return 'Correcteur';
+    case 'ChefDeCentreAdjoint': return 'Chef de centre adjoint';
+    case 'AssistantTechniqueInformatique': return 'Assistant technique en informatique';
+    case 'AgentSecretariat': return 'Agent de secrétariat';
+    case 'ComiteVigilance': return 'Comité de vigilance';
+    case 'Secretaire': return 'Secrétaire';
+    case 'ResponsableSecuriteSujets': return 'Responsable de sécurité des sujets';
+    case 'SurveillantSalle': return 'Surveillant de salle';
+    case 'SurveillantCour': return 'Surveillant de cour';
+    case 'AgentStade': return 'Agent de stade';
+    case 'Medecin': return 'Médecin';
+    case 'Interrogateur': return 'Interrogateur';
+    case 'Surveillant': return 'Surveillant';
     case 'ChefDeCentre':
       return 'Chef de centre';
     case 'Securite':

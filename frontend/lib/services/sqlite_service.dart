@@ -11,6 +11,7 @@ import '../models/membre_previsionnel.dart';
 import '../models/salle.dart';
 import '../models/item_liste.dart';
 import '../models/enseignant.dart';
+import '../models/chat_message.dart';
 import '../models/quota_membre.dart';
 
 /// Service d'accès à la base de données locale (SQLite).
@@ -37,6 +38,7 @@ class SqliteService {
   static const String tableItemListe = 'item_liste';
   static const String tableEnseignant = 'enseignant';
   static const String tableQuotaMembre = 'quota_membre';
+  static const String tableChatMessage = 'chat_message';
 
   Future<Database> get database async {
     if (_db != null) return _db!;
@@ -83,7 +85,28 @@ class SqliteService {
     }
 
     final String path = join(await getDatabasesPath(), 'gestion_examens.db');
-    return openDatabase(path, version: 1, onCreate: _onCreate);
+    return openDatabase(
+      path,
+      version: 3,
+      onCreate: _onCreate,
+      onUpgrade: (db, oldVersion, newVersion) async {
+        if (oldVersion < 2) {
+          await db.execute('ALTER TABLE $tableEnseignant ADD COLUMN cin TEXT');
+          await db.execute('ALTER TABLE $tableEnseignant ADD COLUMN sexe TEXT');
+          await db.execute(
+            'ALTER TABLE $tableCandidatCepe ADD COLUMN codeCentreCorrection TEXT',
+          );
+          await db.execute(
+            'ALTER TABLE $tableCandidatBepc ADD COLUMN codeCentreCorrection TEXT',
+          );
+        }
+        if (oldVersion < 3) {
+          await db.execute(
+            'ALTER TABLE $tableCandidatCepe ADD COLUMN neeVert INTEGER NOT NULL DEFAULT 0',
+          );
+        }
+      },
+    );
   }
 
   Future<void> _onCreate(Database db, int version) async {
@@ -104,10 +127,12 @@ class SqliteService {
         nomMere TEXT NOT NULL,
         groupe TEXT NOT NULL,
         langue TEXT,
+        neeVert INTEGER NOT NULL DEFAULT 0,
         codeEcoleOrigine TEXT NOT NULL,
         codeCegAccueil TEXT,
         codeEtab TEXT NOT NULL,
         codeCentreEcrit TEXT,
+        codeCentreCorrection TEXT,
         numeroSalle TEXT,
         eps INTEGER NOT NULL DEFAULT 0,
         epreuveObligatoire TEXT,
@@ -142,6 +167,7 @@ class SqliteService {
         codeLyceeAccueil TEXT,
         codeEtab TEXT NOT NULL,
         codeCentreEcrit TEXT,
+        codeCentreCorrection TEXT,
         numeroSalle TEXT,
         eps INTEGER NOT NULL DEFAULT 0,
         epreuveObligatoire TEXT,
@@ -199,7 +225,9 @@ class SqliteService {
         phone TEXT NOT NULL,
         adresse TEXT NOT NULL,
         codeEtab TEXT NOT NULL,
-        fonction TEXT NOT NULL
+        fonction TEXT NOT NULL,
+        cin TEXT,
+        sexe TEXT
       )
     ''');
 
@@ -211,6 +239,21 @@ class SqliteService {
         anneeSession INTEGER NOT NULL,
         role TEXT NOT NULL,
         quantite INTEGER NOT NULL
+      )
+    ''');
+
+    // --- Table Chat (messages établissement <-> Administration CISCO) ---
+    // Version LOCALE pour tester sur Windows sans Firebase. Même structure
+    // que la future collection Firestore, pour faciliter le passage à la
+    // vraie synchro en ligne plus tard.
+    await db.execute('''
+      CREATE TABLE $tableChatMessage (
+        id TEXT PRIMARY KEY,
+        codeEtab TEXT NOT NULL,
+        expediteur TEXT NOT NULL,
+        texte TEXT NOT NULL,
+        horodatage TEXT NOT NULL,
+        lu INTEGER NOT NULL DEFAULT 0
       )
     ''');
   }
@@ -559,6 +602,16 @@ class SqliteService {
     return rows.map(Enseignant.fromMap).toList();
   }
 
+  Future<void> modifierEnseignant(Enseignant enseignant) async {
+    final db = await database;
+    await db.update(
+      tableEnseignant,
+      enseignant.toMap(),
+      where: 'matricule = ?',
+      whereArgs: [enseignant.matricule],
+    );
+  }
+
   Future<void> supprimerEnseignant(String matricule) async {
     final db = await database;
     await db.delete(
@@ -592,6 +645,45 @@ class SqliteService {
       whereArgs: [codeEtab, anneeSession],
     );
     return rows.map(QuotaMembre.fromMap).toList();
+  }
+
+  // ======================================================================
+  //  Chat (établissement <-> Administration CISCO) — version locale
+  // ======================================================================
+
+  Future<void> insererMessageChat(ChatMessage message, String codeEtab) async {
+    final db = await database;
+    final donnees = message.toMap();
+    donnees['codeEtab'] = codeEtab;
+    await db.insert(
+      tableChatMessage,
+      donnees,
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  Future<List<ChatMessage>> listerMessagesChat(String codeEtab) async {
+    final db = await database;
+    final rows = await db.query(
+      tableChatMessage,
+      where: 'codeEtab = ?',
+      whereArgs: [codeEtab],
+      orderBy: 'horodatage ASC',
+    );
+    return rows.map(ChatMessage.fromMap).toList();
+  }
+
+  /// Liste des établissements ayant au moins un message, avec le dernier
+  /// message de chacun — utilisé côté admin pour la liste des conversations.
+  Future<List<Map<String, Object?>>> listerConversationsChat() async {
+    final db = await database;
+    final rows = await db.rawQuery('''
+      SELECT codeEtab, texte AS dernierMessage, expediteur AS dernierExpediteur, MAX(horodatage) AS derniereActivite
+      FROM $tableChatMessage
+      GROUP BY codeEtab
+      ORDER BY derniereActivite DESC
+    ''');
+    return rows;
   }
 
   // ======================================================================

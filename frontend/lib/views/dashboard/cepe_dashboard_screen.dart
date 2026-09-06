@@ -5,6 +5,7 @@ import '../candidat/formulaire_cepe_screen.dart';
 import '../salle/formulaire_salle_screen.dart';
 import '../membre/membre_hub_screen.dart';
 import '../candidat/liste_candidats_screen.dart';
+import 'statistiques_examen_screen.dart';
 
 /// Dashboard spécifique au CEPE : regroupe tous les boutons d'action liés
 /// à cet examen (formulaire candidat, salles, membres, listes de
@@ -70,9 +71,11 @@ class CepeDashboardScreen extends StatelessWidget {
             titre: 'Statistiques CEPE',
             icone: Icons.bar_chart,
             couleur: Colors.teal,
-            onTap: () {
-              // TODO : écran de statistiques
-            },
+            onTap: () => Navigator.of(context).push(
+              MaterialPageRoute(
+                builder: (_) => const StatistiquesExamenScreen(pourCepe: true),
+              ),
+            ),
           ),
         ],
       ),

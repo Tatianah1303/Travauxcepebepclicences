@@ -43,6 +43,7 @@ class CandidatCepe {
 
   /// Code de l'école d'origine (liste ecoleOrigineCepe) : d'où vient le
   /// candidat. Toujours renseigné, indépendant du groupe.
+  final int neeVert;
   final String codeEcoleOrigine;
 
   /// Code du CEG d'accueil (liste 'cegAceuil'), propre au CEPE.
@@ -53,6 +54,7 @@ class CandidatCepe {
 
   /// Saisi manuellement par l'établissement (pas une liste fixe)
   final String? codeCentreEcrit;
+  final String? codeCentreCorrection;
   final String? numeroSalle;
 
   // --- EPS (facultatif globalement, mais si activé, règles ci-dessous) ---
@@ -88,10 +90,12 @@ class CandidatCepe {
     required this.nomMere,
     required this.groupe,
     this.langue,
+    required this.neeVert,
     required this.codeEcoleOrigine,
     this.codeCegAccueil,
     required this.codeEtab,
     this.codeCentreEcrit,
+    this.codeCentreCorrection,
     this.numeroSalle,
     this.eps = false,
     this.epreuveObligatoire,
@@ -118,10 +122,12 @@ class CandidatCepe {
       'nomMere': nomMere,
       'groupe': groupe,
       'langue': langue,
+      'neeVert': neeVert,
       'codeEcoleOrigine': codeEcoleOrigine,
       'codeCegAccueil': codeCegAccueil,
       'codeEtab': codeEtab,
       'codeCentreEcrit': codeCentreEcrit,
+      'codeCentreCorrection': codeCentreCorrection,
       'numeroSalle': numeroSalle,
       'eps': eps ? 1 : 0,
       'epreuveObligatoire': epreuveObligatoire,
@@ -149,10 +155,12 @@ class CandidatCepe {
       nomMere: map['nomMere'] as String,
       groupe: map['groupe'] as String,
       langue: map['langue'] as String?,
+      neeVert: (map['neeVert'] as int?) ?? 0,
       codeEcoleOrigine: map['codeEcoleOrigine'] as String,
       codeCegAccueil: map['codeCegAccueil'] as String?,
       codeEtab: map['codeEtab'] as String,
       codeCentreEcrit: map['codeCentreEcrit'] as String?,
+      codeCentreCorrection: map['codeCentreCorrection'] as String?,
       numeroSalle: map['numeroSalle'] as String?,
       eps: (map['eps'] as int) == 1,
       epreuveObligatoire: map['epreuveObligatoire'] as String?,

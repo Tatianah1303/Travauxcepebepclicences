@@ -88,6 +88,18 @@ class _DesignationMembreScreenState extends State<DesignationMembreScreen> {
   }
 
   Future<void> _designer(String role) async {
+    if (_quotaPourRole(role) == 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Vous ne pouvez pas désigner de ${libelleRole(role)} : aucun quota défini pour ce rôle. '
+            'Définissez d\'abord un quota supérieur à 0.',
+          ),
+        ),
+      );
+      return;
+    }
+
     final eligibles = _enseignantsEligibles(role);
     if (eligibles.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -185,12 +197,17 @@ class _DesignationMembreScreenState extends State<DesignationMembreScreen> {
                   style: const TextStyle(fontWeight: FontWeight.bold),
                 ),
                 subtitle: Text(
-                  '${_designesPourRole(role)} / ${_quotaPourRole(role)} désigné(s)',
+                  _quotaPourRole(role) == 0
+                      ? 'Aucun quota défini'
+                      : '${_designesPourRole(role)} / ${_quotaPourRole(role)} désigné(s)',
+                  style: _quotaPourRole(role) == 0
+                      ? const TextStyle(color: Colors.red)
+                      : null,
                 ),
                 trailing: ElevatedButton.icon(
                   onPressed:
-                      _designesPourRole(role) >= _quotaPourRole(role) &&
-                          _quotaPourRole(role) > 0
+                      (_quotaPourRole(role) == 0 ||
+                          _designesPourRole(role) >= _quotaPourRole(role))
                       ? null
                       : () => _designer(role),
                   icon: const Icon(Icons.person_add, size: 18),

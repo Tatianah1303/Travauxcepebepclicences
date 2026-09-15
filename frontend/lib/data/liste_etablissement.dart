@@ -1,4 +1,4 @@
-/// Liste complète des établissements (feuille 'Liste Etab').
+/// Liste complète des établissements (feuille 'Liste Etab').l
 /// codeSecteur : 0 = Public, 1 = Privé (à confirmer), zap = zone d'appartenance
 /// Généré depuis stageCisco.xlsx — 366 entrées.
 const List<Map<String, dynamic>> listeEtablissements = [

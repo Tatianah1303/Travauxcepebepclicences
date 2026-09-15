@@ -16,15 +16,19 @@ class BepcDashboardScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Dashboard BEPC')),
-      floatingActionButton: FloatingActionButton(
-        backgroundColor: Colors.green,
-        onPressed: () => Navigator.of(context).push(
-          MaterialPageRoute(
-            builder: (_) => const ListesMenuScreen(pourCepe: false),
+      appBar: AppBar(
+        title: const Text('Dashboard BEPC'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.add),
+            tooltip: 'Listes de référence (établissements...)',
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute(
+                builder: (_) => const ListesMenuScreen(pourCepe: false),
+              ),
+            ),
           ),
-        ),
-        child: const Icon(Icons.add, color: Colors.white),
+        ],
       ),
       body: ListView(
         padding: const EdgeInsets.all(16),

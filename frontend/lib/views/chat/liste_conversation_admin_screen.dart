@@ -79,16 +79,32 @@ class _ListeConversationsAdminScreenState
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                 ),
-                trailing: const Icon(Icons.chevron_right),
-                onTap: () => Navigator.of(context).push(
-                  MaterialPageRoute(
-                    builder: (_) => ChatThreadScreen(
-                      codeEtab: codeEtab,
-                      expediteurActuel: 'admin',
-                      titre: nomEtab,
-                    ),
+                trailing: FutureBuilder<int>(
+                  future: LocalChatService.compterNonLus(
+                    codeEtab,
+                    moi: 'admin',
                   ),
+                  builder: (ctx, snap) {
+                    final n = snap.data ?? 0;
+                    if (n == 0) return const Icon(Icons.chevron_right);
+                    return Badge(
+                      label: Text('$n'),
+                      child: const Icon(Icons.chevron_right),
+                    );
+                  },
                 ),
+                onTap: () async {
+                  await Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => ChatThreadScreen(
+                        codeEtab: codeEtab,
+                        expediteurActuel: 'admin',
+                        titre: nomEtab,
+                      ),
+                    ),
+                  );
+                  setState(() {});
+                },
               );
             },
           );

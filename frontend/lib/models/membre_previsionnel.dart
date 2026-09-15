@@ -35,6 +35,12 @@ class MembrePrevisionnel {
 
   final int anneeSession;
 
+  /// 'CEPE' ou 'BEPC' — indispensable pour bien séparer les membres des
+  /// deux examens, même au sein d'un même établissement (avant même
+  /// l'attribution à un centre, on doit déjà savoir pour quel examen ce
+  /// membre est désigné).
+  final String typeExamen;
+
   const MembrePrevisionnel({
     required this.codeMembre,
     required this.matriculeEnseignant,
@@ -45,6 +51,7 @@ class MembrePrevisionnel {
     this.codeCentreEcrit,
     this.codeCentreCorrection,
     required this.anneeSession,
+    required this.typeExamen,
   });
 
   Map<String, Object?> toMap() {
@@ -58,6 +65,7 @@ class MembrePrevisionnel {
       'codeCentreEcrit': codeCentreEcrit,
       'codeCentreCorrection': codeCentreCorrection,
       'anneeSession': anneeSession,
+      'typeExamen': typeExamen,
     };
   }
 
@@ -72,6 +80,10 @@ class MembrePrevisionnel {
       codeCentreEcrit: map['codeCentreEcrit'] as String?,
       codeCentreCorrection: map['codeCentreCorrection'] as String?,
       anneeSession: map['anneeSession'] as int,
+      // Anciennes lignes créées avant l'ajout du champ : on suppose CEPE
+      // par défaut (valeur la plus fréquente), à corriger manuellement si
+      // besoin.
+      typeExamen: (map['typeExamen'] as String?) ?? 'CEPE',
     );
   }
 
@@ -95,6 +107,7 @@ class MembrePrevisionnel {
       codeCentreEcrit: codeCentreEcrit ?? this.codeCentreEcrit,
       codeCentreCorrection: codeCentreCorrection ?? this.codeCentreCorrection,
       anneeSession: anneeSession,
+      typeExamen: typeExamen,
     );
   }
 }

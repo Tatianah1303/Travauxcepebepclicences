@@ -13,7 +13,8 @@ import '../../utils/csv_export.dart';
 /// rôle. Cliquer sur un membre ouvre un détail affichant ses informations
 /// et ses photos CIN recto/verso.
 class ListeMembresScreen extends StatefulWidget {
-  const ListeMembresScreen({super.key});
+  final String typeExamen;
+  const ListeMembresScreen({super.key, required this.typeExamen});
 
   @override
   State<ListeMembresScreen> createState() => _ListeMembresScreenState();
@@ -41,12 +42,17 @@ class _ListeMembresScreenState extends State<ListeMembresScreen> {
     final matriculesEtab = enseignants.map((e) => e.matricule).toSet();
     final tousMembres = await SqliteService.instance.listerMembres(
       anneeSession: _anneeSession,
+      typeExamen: widget.typeExamen,
     );
     final centres = <ItemListe>[
-      ...await SqliteService.instance.listerItems('centreEcritCepe'),
-      ...await SqliteService.instance.listerItems('centreCorrectionCepe'),
-      ...await SqliteService.instance.listerItems('centreEcritBepc'),
-      ...await SqliteService.instance.listerItems('centreCorrectionBepc'),
+      ...await SqliteService.instance.listerItems(
+        widget.typeExamen == 'CEPE' ? 'centreEcritCepe' : 'centreEcritBepc',
+      ),
+      ...await SqliteService.instance.listerItems(
+        widget.typeExamen == 'CEPE'
+            ? 'centreCorrectionCepe'
+            : 'centreCorrectionBepc',
+      ),
     ];
     final nomsCentres = <String, String>{
       for (final c in centres)
@@ -235,7 +241,7 @@ class _ListeMembresScreenState extends State<ListeMembresScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Liste des membres prévisionnels'),
+        title: Text('Liste des membres — ${widget.typeExamen}'),
         actions: [
           IconButton(
             icon: const Icon(Icons.file_download),

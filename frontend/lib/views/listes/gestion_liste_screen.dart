@@ -71,6 +71,22 @@ class _GestionListeScreenState extends State<GestionListeScreen> {
     return valeurBrute;
   }
 
+  IconData _iconePourChamp(String champ) {
+    switch (champ) {
+      case 'code':
+        return Icons.qr_code;
+      case 'libelle':
+      case 'nom':
+        return Icons.label;
+      case 'secteur':
+        return Icons.apartment;
+      case 'codecorrection':
+        return Icons.link;
+      default:
+        return Icons.edit_note;
+    }
+  }
+
   Future<void> _ouvrirFormulaire({ItemListe? existant}) async {
     final controllers = {
       for (final champ in widget.nomsChamps)
@@ -79,44 +95,141 @@ class _GestionListeScreenState extends State<GestionListeScreen> {
 
     final resultat = await showDialog<bool>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text(existant == null ? 'Ajouter' : 'Modifier'),
-        content: SingleChildScrollView(
+      builder: (ctx) => Dialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+        insetPadding: const EdgeInsets.all(20),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 420),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              for (final champ in widget.nomsChamps)
-                if (champ == 'secteur')
-                  DropdownButtonFormField<String>(
-                    value: controllers[champ]!.text.isEmpty
-                        ? null
-                        : controllers[champ]!.text,
-                    decoration: const InputDecoration(labelText: 'Secteur'),
-                    items: const [
-                      DropdownMenuItem(value: '0', child: Text('Public')),
-                      DropdownMenuItem(value: '1', child: Text('Privé')),
-                      DropdownMenuItem(value: '2', child: Text('Libre')),
-                    ],
-                    onChanged: (val) => controllers[champ]!.text = val ?? '',
-                  )
-                else
-                  TextField(
-                    controller: controllers[champ],
-                    decoration: InputDecoration(labelText: champ),
+              // --- Bandeau coloré en haut de la boîte de dialogue ---
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.fromLTRB(20, 18, 20, 18),
+                decoration: BoxDecoration(
+                  borderRadius: const BorderRadius.vertical(
+                    top: Radius.circular(18),
                   ),
+                  gradient: LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: existant == null
+                        ? [Colors.green.shade600, Colors.teal.shade600]
+                        : [Colors.blue.shade600, Colors.indigo.shade600],
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withValues(alpha: 0.2),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: Icon(
+                        existant == null ? Icons.add : Icons.edit,
+                        color: Colors.white,
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Text(
+                        existant == null
+                            ? 'Ajouter — ${widget.titre}'
+                            : 'Modifier — ${widget.titre}',
+                        style: const TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 17,
+                          color: Colors.white,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.all(20),
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      for (final champ in widget.nomsChamps) ...[
+                        if (champ == 'secteur')
+                          DropdownButtonFormField<String>(
+                            initialValue: controllers[champ]!.text.isEmpty
+                                ? null
+                                : controllers[champ]!.text,
+                            decoration: InputDecoration(
+                              labelText: 'Secteur',
+                              prefixIcon: Icon(_iconePourChamp(champ)),
+                              border: const OutlineInputBorder(),
+                              filled: true,
+                              fillColor: Colors.grey.shade50,
+                            ),
+                            items: const [
+                              DropdownMenuItem(
+                                value: '0',
+                                child: Text('Public'),
+                              ),
+                              DropdownMenuItem(
+                                value: '1',
+                                child: Text('Privé'),
+                              ),
+                              DropdownMenuItem(
+                                value: '2',
+                                child: Text('Libre'),
+                              ),
+                            ],
+                            onChanged: (val) =>
+                                controllers[champ]!.text = val ?? '',
+                          )
+                        else
+                          TextField(
+                            controller: controllers[champ],
+                            decoration: InputDecoration(
+                              labelText:
+                                  champ[0].toUpperCase() + champ.substring(1),
+                              prefixIcon: Icon(_iconePourChamp(champ)),
+                              border: const OutlineInputBorder(),
+                              filled: true,
+                              fillColor: Colors.grey.shade50,
+                            ),
+                          ),
+                        const SizedBox(height: 14),
+                      ],
+                      const SizedBox(height: 4),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.end,
+                        children: [
+                          TextButton(
+                            onPressed: () => Navigator.of(ctx).pop(false),
+                            child: const Text('Annuler'),
+                          ),
+                          const SizedBox(width: 8),
+                          ElevatedButton.icon(
+                            onPressed: () => Navigator.of(ctx).pop(true),
+                            icon: const Icon(Icons.check, size: 18),
+                            label: const Text('Enregistrer'),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.green,
+                              foregroundColor: Colors.white,
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 18,
+                                vertical: 12,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ),
             ],
           ),
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(false),
-            child: const Text('Annuler'),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.of(ctx).pop(true),
-            child: const Text('Enregistrer'),
-          ),
-        ],
       ),
     );
 
@@ -152,11 +265,13 @@ class _GestionListeScreenState extends State<GestionListeScreen> {
     final items = _itemsFiltres;
 
     return Scaffold(
+      backgroundColor: const Color(0xFFF4F6F9),
       appBar: AppBar(title: Text(widget.titre)),
-      floatingActionButton: FloatingActionButton(
+      floatingActionButton: FloatingActionButton.extended(
         backgroundColor: Colors.green,
         onPressed: () => _ouvrirFormulaire(),
-        child: const Icon(Icons.add, color: Colors.white),
+        icon: const Icon(Icons.add, color: Colors.white),
+        label: const Text('Ajouter', style: TextStyle(color: Colors.white)),
       ),
       body: Column(
         children: [
@@ -175,51 +290,68 @@ class _GestionListeScreenState extends State<GestionListeScreen> {
           Expanded(
             child: items.isEmpty
                 ? const Center(child: Text('Aucun résultat'))
-                : SingleChildScrollView(
-                    scrollDirection: Axis.horizontal,
-                    child: SingleChildScrollView(
-                      child: DataTable(
-                        columns: [
-                          for (final champ in widget.nomsChamps)
-                            DataColumn(label: Text(champ.toUpperCase())),
-                          const DataColumn(label: Text('ACTIONS')),
-                        ],
-                        rows: [
-                          for (final item in items)
-                            DataRow(
-                              cells: [
-                                for (final champ in widget.nomsChamps)
-                                  DataCell(
-                                    Text(
-                                      _valeurAffichee(
-                                        champ,
-                                        item.champs[champ] ?? '',
+                : Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 12),
+                    child: Card(
+                      elevation: 1,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: SingleChildScrollView(
+                        scrollDirection: Axis.horizontal,
+                        child: SingleChildScrollView(
+                          child: DataTable(
+                            headingRowColor: WidgetStateProperty.all(
+                              Colors.green.shade50,
+                            ),
+                            columns: [
+                              for (final champ in widget.nomsChamps)
+                                DataColumn(label: Text(champ.toUpperCase())),
+                              const DataColumn(label: Text('ACTIONS')),
+                            ],
+                            rows: [
+                              for (final item in items)
+                                DataRow(
+                                  cells: [
+                                    for (final champ in widget.nomsChamps)
+                                      DataCell(
+                                        Text(
+                                          _valeurAffichee(
+                                            champ,
+                                            item.champs[champ] ?? '',
+                                          ),
+                                        ),
+                                      ),
+                                    DataCell(
+                                      Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          IconButton(
+                                            icon: const Icon(
+                                              Icons.edit,
+                                              size: 20,
+                                              color: Colors.blue,
+                                            ),
+                                            onPressed: () => _ouvrirFormulaire(
+                                              existant: item,
+                                            ),
+                                          ),
+                                          IconButton(
+                                            icon: const Icon(
+                                              Icons.delete,
+                                              size: 20,
+                                              color: Colors.red,
+                                            ),
+                                            onPressed: () => _supprimer(item),
+                                          ),
+                                        ],
                                       ),
                                     ),
-                                  ),
-                                DataCell(
-                                  Row(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      IconButton(
-                                        icon: const Icon(Icons.edit, size: 20),
-                                        onPressed: () =>
-                                            _ouvrirFormulaire(existant: item),
-                                      ),
-                                      IconButton(
-                                        icon: const Icon(
-                                          Icons.delete,
-                                          size: 20,
-                                          color: Colors.red,
-                                        ),
-                                        onPressed: () => _supprimer(item),
-                                      ),
-                                    ],
-                                  ),
+                                  ],
                                 ),
-                              ],
-                            ),
-                        ],
+                            ],
+                          ),
+                        ),
                       ),
                     ),
                   ),

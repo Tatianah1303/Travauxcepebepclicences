@@ -73,7 +73,7 @@ class ArchiveService {
         'Sexe',
         'Groupe',
         'Langue',
-        'Née vert',
+        'Née vers',
         'État',
       ],
       lignes: bepc

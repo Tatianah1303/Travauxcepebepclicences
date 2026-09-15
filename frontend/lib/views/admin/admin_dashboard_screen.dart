@@ -7,9 +7,11 @@ import '../../services/sqlite_service.dart';
 import '../../services/admin_session.dart';
 import '../../services/archive_service.dart';
 import '../../utils/csv_export.dart';
+import '../../widgets/searchable_dropdown.dart';
 import 'login_admin_screen.dart';
 import '../chat/liste_conversation_admin_screen.dart';
 import 'listes_admin_screen.dart';
+import '../admin/peridode_saisie_screen.dart';
 
 /// Dashboard de l'Administration CISCO : rôle purement consultatif.
 /// - 3 catégories (Candidats CEPE, Candidats BEPC, Membres prévisionnels)
@@ -34,7 +36,8 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
   int _bepcNonAttribues = 0;
   Map<String, String> _nomsEtab = {};
   List<ItemListe> _listeEtablissements = [];
-  List<_LigneRoleEtab> _tableauRoles = [];
+  List<_LigneRoleEtab> _tableauRolesCepe = [];
+  List<_LigneRoleEtab> _tableauRolesBepc = [];
 
   // Données brutes pour les statistiques (non filtrées) — le filtre
   // s'applique au moment de l'affichage des graphiques.
@@ -72,17 +75,20 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     final etabDeMatricule = {
       for (final e in enseignants) e.matricule: e.codeEtab,
     };
+    final sexeDeMatricule = {for (final e in enseignants) e.matricule: e.sexe};
 
-    final Map<String, Map<String, int>> compte = {};
+    final Map<String, Map<String, int>> compteCepe = {};
+    final Map<String, Map<String, int>> compteBepc = {};
     for (final m in membres) {
       final codeEtab = etabDeMatricule[m.matriculeEnseignant];
       if (codeEtab == null) continue;
+      final compte = m.typeExamen == 'BEPC' ? compteBepc : compteCepe;
       compte.putIfAbsent(codeEtab, () => {for (final r in rolesMembre) r: 0});
       compte[codeEtab]![m.role] = (compte[codeEtab]![m.role] ?? 0) + 1;
     }
 
-    final tableau =
-        compte.entries
+    List<_LigneRoleEtab> construireTableau(Map<String, Map<String, int>> c) =>
+        c.entries
             .map(
               (entry) => _LigneRoleEtab(
                 codeEtab: entry.key,
@@ -93,6 +99,9 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
             .toList()
           ..sort((a, b) => a.nomEtab.compareTo(b.nomEtab));
 
+    final tableauCepe = construireTableau(compteCepe);
+    final tableauBepc = construireTableau(compteBepc);
+
     setState(() {
       _totalCepe = cepe.length;
       _totalBepc = bepc.length;
@@ -101,7 +110,8 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
       _totalMembres = membres.length;
       _nomsEtab = nomsEtab;
       _listeEtablissements = etablissements;
-      _tableauRoles = tableau;
+      _tableauRolesCepe = tableauCepe;
+      _tableauRolesBepc = tableauBepc;
       _candidatsCepeRaw = cepe
           .map((c) => {'codeEtab': c.codeEtab, 'sexe': c.sexe})
           .toList();
@@ -113,6 +123,8 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
             (m) => {
               'codeEtab': etabDeMatricule[m.matriculeEnseignant],
               'role': m.role,
+              'sexe': sexeDeMatricule[m.matriculeEnseignant],
+              'typeExamen': m.typeExamen,
             },
           )
           .toList();
@@ -121,15 +133,21 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
   }
 
   // --------------------------------------------------------------------
-  //  Exports Excel (national, toutes établissements)
+  //  Exports Excel — filtrés sur l'établissement sélectionné uniquement
+  //  (jamais la liste globale/nationale affichée dans le dashboard)
   // --------------------------------------------------------------------
 
   Future<void> _exporterCepe() async {
-    final cepe = await SqliteService.instance.listerCandidatsCepe();
-    final garcons = cepe.where((c) => c.sexe == 'G').length;
-    final filles = cepe.where((c) => c.sexe == 'F').length;
+    if (_etabFiltre == null) {
+      _confirmer('Choisissez d\'abord un établissement à exporter');
+      return;
+    }
+    final cepe = (await SqliteService.instance.listerCandidatsCepe())
+        .where((c) => c.codeEtab == _etabFiltre)
+        .toList();
+    final nomEtab = _nomsEtab[_etabFiltre] ?? _etabFiltre!;
     final chemin = await exporterEnCsv(
-      nomFichier: 'candidats_cepe_national',
+      nomFichier: 'candidats_cepe_$nomEtab',
       entetes: const [
         'Établissement',
         'Nom',
@@ -138,32 +156,33 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
         'Groupe',
         'État',
       ],
-      lignes:
-          cepe
-              .map(
-                (c) => [
-                  _nomsEtab[c.codeEtab] ?? c.codeEtab,
-                  c.nom,
-                  c.prenom,
-                  c.sexe,
-                  c.groupe,
-                  c.etatCandidat,
-                ],
-              )
-              .toList()
-            ..add(['', '', '', 'Garçons', '$garcons', '', ''])
-            ..add(['', '', '', 'Filles', '$filles', '', ''])
-            ..add(['', '', '', 'TOTAL', '${cepe.length}', '', '']),
+      lignes: cepe
+          .map(
+            (c) => [
+              _nomsEtab[c.codeEtab] ?? c.codeEtab,
+              c.nom,
+              c.prenom,
+              c.sexe,
+              c.groupe,
+              c.etatCandidat,
+            ],
+          )
+          .toList(),
     );
     _confirmer('Exporté : $chemin');
   }
 
   Future<void> _exporterBepc() async {
-    final bepc = await SqliteService.instance.listerCandidatsBepc();
-    final garcons = bepc.where((c) => c.sexe == 'G').length;
-    final filles = bepc.where((c) => c.sexe == 'F').length;
+    if (_etabFiltre == null) {
+      _confirmer('Choisissez d\'abord un établissement à exporter');
+      return;
+    }
+    final bepc = (await SqliteService.instance.listerCandidatsBepc())
+        .where((c) => c.codeEtab == _etabFiltre)
+        .toList();
+    final nomEtab = _nomsEtab[_etabFiltre] ?? _etabFiltre!;
     final chemin = await exporterEnCsv(
-      nomFichier: 'candidats_bepc_national',
+      nomFichier: 'candidats_bepc_$nomEtab',
       entetes: const [
         'Établissement',
         'Nom',
@@ -171,60 +190,50 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
         'Sexe',
         'Groupe',
         'Langue',
-        'Née vert',
+        'Née vers',
         'État',
       ],
-      lignes:
-          bepc
-              .map(
-                (c) => [
-                  _nomsEtab[c.codeEtab] ?? c.codeEtab,
-                  c.nom,
-                  c.prenom,
-                  c.sexe,
-                  c.groupe,
-                  c.langue ?? '-',
-                  '${c.neeVert}',
-                  c.etatCandidat,
-                ],
-              )
-              .toList()
-            ..add(['', '', '', 'Garçons', '$garcons', '', '', ''])
-            ..add(['', '', '', 'Filles', '$filles', '', '', ''])
-            ..add(['', '', '', 'TOTAL', '${bepc.length}', '', '', '']),
+      lignes: bepc
+          .map(
+            (c) => [
+              _nomsEtab[c.codeEtab] ?? c.codeEtab,
+              c.nom,
+              c.prenom,
+              c.sexe,
+              c.groupe,
+              c.langue ?? '-',
+              '${c.neeVert}',
+              c.etatCandidat,
+            ],
+          )
+          .toList(),
     );
     _confirmer('Exporté : $chemin');
   }
 
-  Future<void> _exporterMembres() async {
-    final membres = await SqliteService.instance.listerMembres();
+  Future<void> _exporterMembres(String typeExamen) async {
+    if (_etabFiltre == null) {
+      _confirmer('Choisissez d\'abord un établissement à exporter');
+      return;
+    }
     final enseignants = await SqliteService.instance.listerTousEnseignants();
     final parMatricule = {for (final e in enseignants) e.matricule: e};
-    final hommes = membres
-        .where((m) => parMatricule[m.matriculeEnseignant]?.sexe == 'G')
-        .length;
-    final femmes = membres
-        .where((m) => parMatricule[m.matriculeEnseignant]?.sexe == 'F')
-        .length;
+    final membres =
+        (await SqliteService.instance.listerMembres(typeExamen: typeExamen))
+            .where(
+              (m) =>
+                  parMatricule[m.matriculeEnseignant]?.codeEtab == _etabFiltre,
+            )
+            .toList();
 
-    // Charger les 4 listes de centres (CEPE + BEPC) pour retrouver les noms
-    final centresEcritCepe = await SqliteService.instance.listerItems(
-      'centreEcritCepe',
+    // Seulement les centres du type d'examen concerné (pas de mélange
+    // CEPE/BEPC dans les noms de centres retrouvés).
+    final tousCentresEcrit = await SqliteService.instance.listerItems(
+      typeExamen == 'CEPE' ? 'centreEcritCepe' : 'centreEcritBepc',
     );
-    final centresEcritBepc = await SqliteService.instance.listerItems(
-      'centreEcritBepc',
+    final tousCentresCorrection = await SqliteService.instance.listerItems(
+      typeExamen == 'CEPE' ? 'centreCorrectionCepe' : 'centreCorrectionBepc',
     );
-    final centresCorrectionCepe = await SqliteService.instance.listerItems(
-      'centreCorrectionCepe',
-    );
-    final centresCorrectionBepc = await SqliteService.instance.listerItems(
-      'centreCorrectionBepc',
-    );
-    final tousCentresEcrit = [...centresEcritCepe, ...centresEcritBepc];
-    final tousCentresCorrection = [
-      ...centresCorrectionCepe,
-      ...centresCorrectionBepc,
-    ];
 
     String libelleDe(String? code, List<ItemListe> centres) {
       if (code == null) return 'Non attribué';
@@ -238,36 +247,34 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
       }
     }
 
+    final nomEtab = _nomsEtab[_etabFiltre] ?? _etabFiltre!;
     final chemin = await exporterEnCsv(
-      nomFichier: 'membres_previsionnels_national',
+      nomFichier: 'membres_${typeExamen.toLowerCase()}_$nomEtab',
       entetes: const [
         'Établissement',
         'Nom',
         'Prénom',
+        'Sexe',
         'Fonction',
         'Rôle',
         'État',
         'Centre d\'écrit',
         'Centre de correction',
       ],
-      lignes:
-          membres.map((m) {
-              final e = parMatricule[m.matriculeEnseignant];
-              return [
-                e != null ? (_nomsEtab[e.codeEtab] ?? e.codeEtab) : '-',
-                e?.nom ?? '-',
-                e?.prenom ?? '-',
-                e?.fonction ?? '-',
-                libelleRole(m.role),
-                m.etat,
-                libelleDe(m.codeCentreEcrit, tousCentresEcrit),
-                libelleDe(m.codeCentreCorrection, tousCentresCorrection),
-                e?.sexe ?? '-',
-              ];
-            }).toList()
-            ..add(['', '', '', 'Hommes', '', '', '$hommes', ''])
-            ..add(['', '', '', 'Femmes', '', '', '$femmes', ''])
-            ..add(['', '', '', 'TOTAL', '', '', '${membres.length}', '']),
+      lignes: membres.map((m) {
+        final e = parMatricule[m.matriculeEnseignant];
+        return [
+          e != null ? (_nomsEtab[e.codeEtab] ?? e.codeEtab) : '-',
+          e?.nom ?? '-',
+          e?.prenom ?? '-',
+          e?.sexe ?? '-',
+          e?.fonction ?? '-',
+          libelleRole(m.role),
+          m.etat,
+          libelleDe(m.codeCentreEcrit, tousCentresEcrit),
+          libelleDe(m.codeCentreCorrection, tousCentresCorrection),
+        ];
+      }).toList(),
     );
     _confirmer('Exporté : $chemin');
   }
@@ -351,22 +358,26 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     final cepeF = _filtrer(_candidatsCepeRaw);
     final bepcF = _filtrer(_candidatsBepcRaw);
     final membresF = _filtrer(_membresRaw);
+    final membresCepeF = membresF
+        .where((m) => m['typeExamen'] == 'CEPE')
+        .toList();
+    final membresBepcF = membresF
+        .where((m) => m['typeExamen'] == 'BEPC')
+        .toList();
 
     return Scaffold(
       backgroundColor: const Color(0xFFF4F6F9),
       appBar: AppBar(
         backgroundColor: const Color(0xFF0D1B2A),
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back),
+          tooltip: 'Retour',
+          onPressed: _deconnexion,
+        ),
         title: Text(
           'CISCO — ${AdminSession.instance.nomAgent ?? "Administration"}',
         ),
         actions: [
-          IconButton(
-            icon: const Icon(Icons.list_alt),
-            tooltip: 'Voir les listes',
-            onPressed: () => Navigator.of(context).push(
-              MaterialPageRoute(builder: (_) => const ListesAdminScreen()),
-            ),
-          ),
           IconButton(
             icon: const Icon(Icons.chat),
             tooltip: 'Messages',
@@ -376,10 +387,54 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
               ),
             ),
           ),
-          IconButton(
-            icon: const Icon(Icons.logout),
-            onPressed: _deconnexion,
-            tooltip: 'Déconnexion',
+          PopupMenuButton<String>(
+            icon: const Icon(Icons.more_vert),
+            tooltip: 'Plus d\'options',
+            onSelected: (valeur) {
+              if (valeur == 'periode') {
+                Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (_) => const PeriodeSaisieScreen(),
+                  ),
+                );
+              } else if (valeur == 'listes') {
+                Navigator.of(context).push(
+                  MaterialPageRoute(builder: (_) => const ListesAdminScreen()),
+                );
+              } else if (valeur == 'deconnexion') {
+                _deconnexion();
+              }
+            },
+            itemBuilder: (ctx) => const [
+              PopupMenuItem(
+                value: 'periode',
+                child: ListTile(
+                  leading: Icon(Icons.campaign_outlined),
+                  title: Text('Période de saisie'),
+                  contentPadding: EdgeInsets.zero,
+                ),
+              ),
+              PopupMenuItem(
+                value: 'listes',
+                child: ListTile(
+                  leading: Icon(Icons.list_alt),
+                  title: Text('Voir les listes'),
+                  contentPadding: EdgeInsets.zero,
+                ),
+              ),
+              PopupMenuDivider(),
+              PopupMenuItem(
+                value: 'deconnexion',
+                child: ListTile(
+                  leading: Icon(Icons.logout, color: Colors.red),
+                  title: Text(
+                    'Déconnexion',
+                    style: TextStyle(color: Colors.red),
+                  ),
+                  contentPadding: EdgeInsets.zero,
+                ),
+              ),
+            ],
           ),
         ],
       ),
@@ -388,168 +443,216 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
         child: ListView(
           padding: const EdgeInsets.all(16),
           children: [
-            Text(
-              _etabFiltre == null
-                  ? 'Sélectionnez un établissement'
-                  : 'Statistiques de l’établissement sélectionné',
-              style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                Expanded(
-                  child: _carteStat(
-                    titre: 'Candidats CEPE',
-                    valeur: cepeF.length,
-                    couleur: Colors.blue,
-                    icone: Icons.school,
-                    onExporter: _exporterCepe,
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: _carteStat(
-                    titre: 'Candidats BEPC',
-                    valeur: bepcF.length,
-                    couleur: Colors.teal,
-                    icone: Icons.menu_book,
-                    onExporter: _exporterBepc,
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            _carteStat(
-              titre: 'Membres prévisionnels',
-              valeur: membresF.length,
-              couleur: Colors.purple,
-              icone: Icons.badge,
-              onExporter: _exporterMembres,
-              pleineLargeur: true,
-            ),
-
-            if (_cepeNonAttribues > 0 || _bepcNonAttribues > 0) ...[
-              const SizedBox(height: 16),
-              Card(
-                color: Colors.orange.shade50,
-                child: Padding(
-                  padding: const EdgeInsets.all(14),
-                  child: Row(
-                    children: [
-                      Icon(Icons.warning_amber, color: Colors.orange.shade800),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: Text(
-                          'Candidats pas encore attribués à un centre d\'écrit : '
-                          '$_cepeNonAttribues (CEPE), $_bepcNonAttribues (BEPC).',
-                          style: TextStyle(color: Colors.orange.shade900),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
+            // --- Sélection de l'établissement : obligatoire avant de voir
+            // les statistiques (point 4 de la demande). ---
+            Card(
+              elevation: 1,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
               ),
-            ],
-
-            const SizedBox(height: 28),
-            const Text(
-              'Membres par rôle et par établissement',
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 12),
-            Card(
-              child: _tableauRoles.isEmpty
-                  ? const Padding(
-                      padding: EdgeInsets.all(20),
-                      child: Text('Aucun membre désigné pour le moment'),
-                    )
-                  : SingleChildScrollView(
-                      scrollDirection: Axis.horizontal,
-                      child: DataTable(
-                        columns: [
-                          const DataColumn(label: Text('ÉTABLISSEMENT')),
-                          ...rolesMembre.map(
-                            (r) => DataColumn(
-                              label: Text(libelleRole(r).toUpperCase()),
-                            ),
-                          ),
-                          const DataColumn(label: Text('TOTAL')),
-                        ],
-                        rows: _tableauRoles
-                            .map(
-                              (ligne) => DataRow(
-                                cells: [
-                                  DataCell(Text(ligne.nomEtab)),
-                                  ...rolesMembre.map(
-                                    (r) => DataCell(
-                                      Text('${ligne.parRole[r] ?? 0}'),
-                                    ),
-                                  ),
-                                  DataCell(
-                                    Text(
-                                      '${ligne.parRole.values.fold(0, (a, b) => a + b)}',
-                                      style: const TextStyle(
-                                        fontWeight: FontWeight.bold,
-                                      ),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            )
-                            .toList(),
-                      ),
-                    ),
-            ),
-
-            const SizedBox(height: 28),
-            Row(
-              children: [
-                const Expanded(
-                  child: Text(
-                    'Statistiques (graphiques)',
-                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 10),
-            Card(
               child: Padding(
                 padding: const EdgeInsets.all(12),
-                child: DropdownButtonFormField<String?>(
-                  initialValue: _etabFiltre,
-                  isExpanded: true,
-                  decoration: const InputDecoration(
-                    labelText: 'Filtrer par établissement (réservé admin)',
-                    prefixIcon: Icon(Icons.filter_alt),
-                    border: OutlineInputBorder(),
-                  ),
-                  items: [
-                    const DropdownMenuItem(
-                      value: null,
-                      child: Text('Tous les établissements'),
-                    ),
-                    ..._listeEtablissements.map(
-                      (e) => DropdownMenuItem(
-                        value: e.champs['code'],
-                        child: Text(
-                          e.champs['nom'] ?? e.champs['code'] ?? '',
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ),
-                    ),
-                  ],
-                  onChanged: (v) => setState(() => _etabFiltre = v),
+                child: SearchableDropdown<ItemListe>(
+                  label: 'Établissement',
+                  icone: Icons.filter_alt,
+                  items: _listeEtablissements,
+                  libelleDe: (e) => e.champs['nom'] ?? e.champs['code'] ?? '',
+                  valeurDe: (e) => e.champs['code'],
+                  valeurSelectionnee: _etabFiltre,
+                  onSelectionner: (e) =>
+                      setState(() => _etabFiltre = e?.champs['code']),
                 ),
               ),
             ),
-            const SizedBox(height: 16),
 
-            _graphiqueCandidatsParExamen(cepeF.length, bepcF.length),
-            const SizedBox(height: 20),
-            _graphiqueMembresParRole(membresF),
-            const SizedBox(height: 20),
-            _graphiqueCandidatsParSexe(cepeF, bepcF),
+            // --- Répartition des établissements par secteur (statistique
+            // globale, indépendante de l'établissement sélectionné). ---
+            const SizedBox(height: 12),
+            Builder(
+              builder: (context) {
+                final publics = _listeEtablissements
+                    .where((e) => e.champs['secteur']?.trim() == '0')
+                    .length;
+                final prives = _listeEtablissements
+                    .where((e) => e.champs['secteur']?.trim() == '1')
+                    .length;
+                final libres = _listeEtablissements
+                    .where((e) => e.champs['secteur']?.trim() == '2')
+                    .length;
+                return Card(
+                  elevation: 1,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Padding(
+                    padding: const EdgeInsets.all(14),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Établissements par secteur (${_listeEtablissements.length} au total)',
+                          style: const TextStyle(fontWeight: FontWeight.w600),
+                        ),
+                        const SizedBox(height: 10),
+                        Row(
+                          children: [
+                            _pastilleSecteur('Public', publics, Colors.blue),
+                            const SizedBox(width: 10),
+                            _pastilleSecteur('Privé', prives, Colors.orange),
+                            const SizedBox(width: 10),
+                            _pastilleSecteur('Libre', libres, Colors.teal),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              },
+            ),
+
+            if (_etabFiltre == null) ...[
+              const SizedBox(height: 40),
+              Center(
+                child: Column(
+                  children: [
+                    Icon(
+                      Icons.touch_app,
+                      size: 48,
+                      color: Colors.grey.shade400,
+                    ),
+                    const SizedBox(height: 12),
+                    Text(
+                      'Choisissez un établissement ci-dessus\npour afficher ses statistiques',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(color: Colors.grey.shade600),
+                    ),
+                  ],
+                ),
+              ),
+            ] else ...[
+              const SizedBox(height: 16),
+              const Text(
+                'Statistiques de l’établissement sélectionné',
+                style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  Expanded(
+                    child: _carteStat(
+                      titre: 'Candidats CEPE',
+                      valeur: cepeF.length,
+                      couleur: Colors.blue,
+                      icone: Icons.school,
+                      onExporter: _exporterCepe,
+                      garcons: cepeF.where((c) => c['sexe'] == 'G').length,
+                      filles: cepeF.where((c) => c['sexe'] == 'F').length,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: _carteStat(
+                      titre: 'Candidats BEPC',
+                      valeur: bepcF.length,
+                      couleur: Colors.teal,
+                      icone: Icons.menu_book,
+                      onExporter: _exporterBepc,
+                      garcons: bepcF.where((c) => c['sexe'] == 'G').length,
+                      filles: bepcF.where((c) => c['sexe'] == 'F').length,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  Expanded(
+                    child: _carteStat(
+                      titre: 'Membres CEPE',
+                      valeur: membresCepeF.length,
+                      couleur: Colors.purple,
+                      icone: Icons.badge,
+                      onExporter: () => _exporterMembres('CEPE'),
+                      garcons: membresCepeF
+                          .where((m) => m['sexe'] == 'G')
+                          .length,
+                      filles: membresCepeF
+                          .where((m) => m['sexe'] == 'F')
+                          .length,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: _carteStat(
+                      titre: 'Membres BEPC',
+                      valeur: membresBepcF.length,
+                      couleur: Colors.deepPurple,
+                      icone: Icons.badge,
+                      onExporter: () => _exporterMembres('BEPC'),
+                      garcons: membresBepcF
+                          .where((m) => m['sexe'] == 'G')
+                          .length,
+                      filles: membresBepcF
+                          .where((m) => m['sexe'] == 'F')
+                          .length,
+                    ),
+                  ),
+                ],
+              ),
+
+              if (_cepeNonAttribues > 0 || _bepcNonAttribues > 0) ...[
+                const SizedBox(height: 16),
+                Card(
+                  color: Colors.orange.shade50,
+                  child: Padding(
+                    padding: const EdgeInsets.all(14),
+                    child: Row(
+                      children: [
+                        Icon(
+                          Icons.warning_amber,
+                          color: Colors.orange.shade800,
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Text(
+                            'Candidats pas encore attribués à un centre d\'écrit : '
+                            '$_cepeNonAttribues (CEPE), $_bepcNonAttribues (BEPC).',
+                            style: TextStyle(color: Colors.orange.shade900),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+
+              const SizedBox(height: 28),
+              const Text(
+                'Membres CEPE par rôle',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 12),
+              _tableauParRole(_tableauRolesCepe),
+
+              const SizedBox(height: 24),
+              const Text(
+                'Membres BEPC par rôle',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 12),
+              _tableauParRole(_tableauRolesBepc),
+
+              const SizedBox(height: 28),
+              const Text(
+                'Statistiques (graphiques)',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 12),
+
+              _graphiqueCandidatsParExamen(cepeF.length, bepcF.length),
+              const SizedBox(height: 20),
+              _graphiqueCandidatsParSexe(cepeF, bepcF),
+            ],
 
             const SizedBox(height: 32),
             Card(
@@ -610,6 +713,75 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     );
   }
 
+  Widget _pastilleSecteur(String label, int valeur, Color couleur) {
+    return Expanded(
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 10),
+        decoration: BoxDecoration(
+          color: couleur.withValues(alpha: 0.1),
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: Column(
+          children: [
+            Text(
+              '$valeur',
+              style: TextStyle(
+                fontSize: 20,
+                fontWeight: FontWeight.bold,
+                color: couleur,
+              ),
+            ),
+            Text(label, style: TextStyle(fontSize: 12, color: couleur)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _tableauParRole(List<_LigneRoleEtab> lignes) {
+    final filtrees = lignes.where((l) => l.codeEtab == _etabFiltre).toList();
+    return Card(
+      child: filtrees.isEmpty
+          ? const Padding(
+              padding: EdgeInsets.all(20),
+              child: Text('Aucun membre désigné pour le moment'),
+            )
+          : SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: DataTable(
+                columns: [
+                  const DataColumn(label: Text('ÉTABLISSEMENT')),
+                  ...rolesMembre.map(
+                    (r) =>
+                        DataColumn(label: Text(libelleRole(r).toUpperCase())),
+                  ),
+                  const DataColumn(label: Text('TOTAL')),
+                ],
+                rows: filtrees
+                    .map(
+                      (ligne) => DataRow(
+                        cells: [
+                          DataCell(Text(ligne.nomEtab)),
+                          ...rolesMembre.map(
+                            (r) => DataCell(Text('${ligne.parRole[r] ?? 0}')),
+                          ),
+                          DataCell(
+                            Text(
+                              '${ligne.parRole.values.fold(0, (a, b) => a + b)}',
+                              style: const TextStyle(
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    )
+                    .toList(),
+              ),
+            ),
+    );
+  }
+
   Widget _carteStat({
     required String titre,
     required int valeur,
@@ -617,6 +789,8 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     required IconData icone,
     required VoidCallback onExporter,
     bool pleineLargeur = false,
+    int? garcons,
+    int? filles,
   }) {
     return Card(
       elevation: 2,
@@ -650,6 +824,23 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                 color: couleur,
               ),
             ),
+            if (garcons != null && filles != null) ...[
+              const SizedBox(height: 4),
+              Wrap(
+                spacing: 10,
+                runSpacing: 2,
+                children: [
+                  Text(
+                    'Garçons : $garcons',
+                    style: TextStyle(fontSize: 12, color: Colors.grey.shade700),
+                  ),
+                  Text(
+                    'Filles : $filles',
+                    style: TextStyle(fontSize: 12, color: Colors.grey.shade700),
+                  ),
+                ],
+              ),
+            ],
             const SizedBox(height: 8),
             SizedBox(
               width: double.infinity,
@@ -680,34 +871,6 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
         'BEPC\n${(bepc / total * 100).toStringAsFixed(0)}%',
       ],
       maxY: [cepe, bepc].reduce((a, b) => a > b ? a : b).toDouble() + 2,
-    );
-  }
-
-  /// Bâtonnets : membres par rôle.
-  Widget _graphiqueMembresParRole(List<Map<String, dynamic>> membres) {
-    final counts = {for (final r in rolesMembre) r: 0};
-    for (final m in membres) {
-      counts[m['role']] = (counts[m['role']] ?? 0) + 1;
-    }
-    final total = membres.isEmpty ? 1 : membres.length;
-    return _carteGraphique(
-      titre: 'Membres prévisionnels par rôle',
-      barGroups: List.generate(
-        rolesMembre.length,
-        (i) => _barre(i, counts[rolesMembre[i]]!.toDouble(), Colors.purple),
-      ),
-      labels: rolesMembre
-          .map(
-            (r) =>
-                '${libelleRole(r)}\n${(counts[r]! / total * 100).toStringAsFixed(0)}%',
-          )
-          .toList(),
-      maxY:
-          (counts.values.isEmpty
-                  ? 1
-                  : counts.values.reduce((a, b) => a > b ? a : b))
-              .toDouble() +
-          2,
     );
   }
 

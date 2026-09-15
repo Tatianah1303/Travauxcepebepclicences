@@ -44,7 +44,9 @@ class MembreHubScreen extends StatelessWidget {
               subtitle: const Text('Nombre de membres voulu par rôle'),
               trailing: const Icon(Icons.chevron_right),
               onTap: () => Navigator.of(context).push(
-                MaterialPageRoute(builder: (_) => const QuotaMembreScreen()),
+                MaterialPageRoute(
+                  builder: (_) => QuotaMembreScreen(typeExamen: typeExamen),
+                ),
               ),
             ),
           ),
@@ -58,7 +60,8 @@ class MembreHubScreen extends StatelessWidget {
               trailing: const Icon(Icons.chevron_right),
               onTap: () => Navigator.of(context).push(
                 MaterialPageRoute(
-                  builder: (_) => const DesignationMembreScreen(),
+                  builder: (_) =>
+                      DesignationMembreScreen(typeExamen: typeExamen),
                 ),
               ),
             ),
@@ -86,7 +89,9 @@ class MembreHubScreen extends StatelessWidget {
               subtitle: const Text('Filtrer par rôle, voir les CIN, exporter'),
               trailing: const Icon(Icons.chevron_right),
               onTap: () => Navigator.of(context).push(
-                MaterialPageRoute(builder: (_) => const ListeMembresScreen()),
+                MaterialPageRoute(
+                  builder: (_) => ListeMembresScreen(typeExamen: typeExamen),
+                ),
               ),
             ),
           ),

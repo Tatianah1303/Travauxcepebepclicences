@@ -9,6 +9,8 @@ import '../models/candidat_cepe.dart';
 import '../models/candidat_bepc.dart';
 import '../models/membre_previsionnel.dart';
 import '../models/salle.dart';
+import '../models/attribution_salle.dart';
+import '../models/periode_saisie.dart';
 import '../models/item_liste.dart';
 import '../models/enseignant.dart';
 import '../models/chat_message.dart';
@@ -38,7 +40,10 @@ class SqliteService {
   static const String tableItemListe = 'item_liste';
   static const String tableEnseignant = 'enseignant';
   static const String tableQuotaMembre = 'quota_membre';
+  static const String tableAttributionSalle = 'attribution_salle';
+  static const String tablePeriodeSaisie = 'periode_saisie';
   static const String tableChatMessage = 'chat_message';
+  static const String tableParametreSession = 'parametre_session';
 
   Future<Database> get database async {
     if (_db != null) return _db!;
@@ -87,7 +92,7 @@ class SqliteService {
     final String path = join(await getDatabasesPath(), 'gestion_examens.db');
     return openDatabase(
       path,
-      version: 3,
+      version: 7,
       onCreate: _onCreate,
       onUpgrade: (db, oldVersion, newVersion) async {
         if (oldVersion < 2) {
@@ -104,6 +109,92 @@ class SqliteService {
           await db.execute(
             'ALTER TABLE $tableCandidatCepe ADD COLUMN neeVert INTEGER NOT NULL DEFAULT 0',
           );
+        }
+        if (oldVersion < 4) {
+          // Ces deux tables (quota_membre, chat_message) avaient été
+          // ajoutées uniquement dans _onCreate, donc jamais créées sur les
+          // appareils qui avaient déjà une base en version 3. C'était la
+          // cause du chat qui restait bloqué en chargement à l'infini
+          // (la requête SQL plantait car la table n'existait pas).
+          await db.execute('''
+            CREATE TABLE IF NOT EXISTS $tableQuotaMembre (
+              id TEXT PRIMARY KEY,
+              typeExamen TEXT NOT NULL,
+              role TEXT NOT NULL,
+              quantite INTEGER NOT NULL
+            )
+          ''');
+          await db.execute('''
+            CREATE TABLE IF NOT EXISTS $tableChatMessage (
+              id TEXT PRIMARY KEY,
+              codeEtab TEXT NOT NULL,
+              expediteur TEXT NOT NULL,
+              texte TEXT NOT NULL,
+              horodatage TEXT NOT NULL,
+              lu INTEGER NOT NULL DEFAULT 0
+            )
+          ''');
+        }
+        if (oldVersion < 5) {
+          // Ajout de la photo jointe et du marqueur "modifié" sur les
+          // messages du chat (édition/suppression/photo demandées).
+          final colonnes = await db.rawQuery(
+            "PRAGMA table_info($tableChatMessage)",
+          );
+          final noms = colonnes.map((c) => c['name'] as String).toSet();
+          if (!noms.contains('photoPath')) {
+            await db.execute(
+              'ALTER TABLE $tableChatMessage ADD COLUMN photoPath TEXT',
+            );
+          }
+          if (!noms.contains('modifie')) {
+            await db.execute(
+              'ALTER TABLE $tableChatMessage ADD COLUMN modifie INTEGER NOT NULL DEFAULT 0',
+            );
+          }
+        }
+        if (oldVersion < 6) {
+          // Séparation stricte CEPE/BEPC pour les membres et les quotas
+          // (même établissement, mais examens différents), + nouvelle
+          // table pour attribuer des places de salle par établissement.
+          final colonnesMembre = await db.rawQuery(
+            "PRAGMA table_info($tableMembrePrevisionnel)",
+          );
+          if (!colonnesMembre.any((c) => c['name'] == 'typeExamen')) {
+            await db.execute(
+              "ALTER TABLE $tableMembrePrevisionnel ADD COLUMN typeExamen TEXT NOT NULL DEFAULT 'CEPE'",
+            );
+          }
+          final colonnesQuota = await db.rawQuery(
+            "PRAGMA table_info($tableQuotaMembre)",
+          );
+          if (!colonnesQuota.any((c) => c['name'] == 'typeExamen')) {
+            await db.execute(
+              "ALTER TABLE $tableQuotaMembre ADD COLUMN typeExamen TEXT NOT NULL DEFAULT 'CEPE'",
+            );
+          }
+          await db.execute('''
+            CREATE TABLE IF NOT EXISTS $tableAttributionSalle (
+              id TEXT PRIMARY KEY,
+              codeSalle TEXT NOT NULL,
+              codeEtab TEXT NOT NULL,
+              nombreCandidats INTEGER NOT NULL
+            )
+          ''');
+        }
+        if (oldVersion < 7) {
+          // Période de saisie autorisée (date début/fin + description),
+          // définie par l'admin, pour bloquer la saisie des candidats hors
+          // de cette fenêtre et remplacer les messages individuels.
+          await db.execute('''
+            CREATE TABLE IF NOT EXISTS $tablePeriodeSaisie (
+              id TEXT PRIMARY KEY,
+              dateDebut TEXT NOT NULL,
+              dateFin TEXT NOT NULL,
+              description TEXT NOT NULL,
+              definiLe TEXT NOT NULL
+            )
+          ''');
         }
       },
     );
@@ -190,7 +281,8 @@ class SqliteService {
         photoCinVerso TEXT,
         codeCentreEcrit TEXT,
         codeCentreCorrection TEXT,
-        anneeSession INTEGER NOT NULL
+        anneeSession INTEGER NOT NULL,
+        typeExamen TEXT NOT NULL DEFAULT 'CEPE'
       )
     ''');
 
@@ -204,6 +296,29 @@ class SqliteService {
         placesLibres INTEGER NOT NULL,
         typeExamen TEXT NOT NULL,
         anneeSession INTEGER NOT NULL
+      )
+    ''');
+
+    // --- Attribution d'un quota de candidats par établissement, pour
+    // chaque salle partagée d'un centre d'écrit ---
+    await db.execute('''
+      CREATE TABLE $tableAttributionSalle (
+        id TEXT PRIMARY KEY,
+        codeSalle TEXT NOT NULL,
+        codeEtab TEXT NOT NULL,
+        nombreCandidats INTEGER NOT NULL
+      )
+    ''');
+
+    // --- Période de saisie autorisée, définie par l'admin, visible par
+    // tous les établissements (une seule ligne, id fixe 'global') ---
+    await db.execute('''
+      CREATE TABLE $tablePeriodeSaisie (
+        id TEXT PRIMARY KEY,
+        dateDebut TEXT NOT NULL,
+        dateFin TEXT NOT NULL,
+        description TEXT NOT NULL,
+        definiLe TEXT NOT NULL
       )
     ''');
 
@@ -238,7 +353,8 @@ class SqliteService {
         codeEtab TEXT NOT NULL,
         anneeSession INTEGER NOT NULL,
         role TEXT NOT NULL,
-        quantite INTEGER NOT NULL
+        quantite INTEGER NOT NULL,
+        typeExamen TEXT NOT NULL DEFAULT 'CEPE'
       )
     ''');
 
@@ -253,7 +369,9 @@ class SqliteService {
         expediteur TEXT NOT NULL,
         texte TEXT NOT NULL,
         horodatage TEXT NOT NULL,
-        lu INTEGER NOT NULL DEFAULT 0
+        lu INTEGER NOT NULL DEFAULT 0,
+        photoPath TEXT,
+        modifie INTEGER NOT NULL DEFAULT 0
       )
     ''');
   }
@@ -384,6 +502,7 @@ class SqliteService {
   Future<List<MembrePrevisionnel>> listerMembres({
     int? anneeSession,
     String? role,
+    String? typeExamen,
   }) async {
     final db = await database;
     final List<String> conditions = [];
@@ -395,6 +514,10 @@ class SqliteService {
     if (role != null) {
       conditions.add('role = ?');
       args.add(role);
+    }
+    if (typeExamen != null) {
+      conditions.add('typeExamen = ?');
+      args.add(typeExamen);
     }
     final rows = await db.query(
       tableMembrePrevisionnel,
@@ -530,6 +653,13 @@ class SqliteService {
   Future<void> supprimerSalle(String id) async {
     final db = await database;
     await db.delete(tableSalle, where: 'id = ?', whereArgs: [id]);
+    // Nettoyage en cascade : les attributions des établissements dans
+    // cette salle n'ont plus de sens si la salle n'existe plus.
+    await db.delete(
+      tableAttributionSalle,
+      where: 'codeSalle = ?',
+      whereArgs: [id],
+    );
   }
 
   // ======================================================================
@@ -637,14 +767,91 @@ class SqliteService {
   Future<List<QuotaMembre>> listerQuotas({
     required String codeEtab,
     required int anneeSession,
+    String? typeExamen,
   }) async {
     final db = await database;
+    final conditions = ['codeEtab = ?', 'anneeSession = ?'];
+    final args = <Object?>[codeEtab, anneeSession];
+    if (typeExamen != null) {
+      conditions.add('typeExamen = ?');
+      args.add(typeExamen);
+    }
     final rows = await db.query(
       tableQuotaMembre,
-      where: 'codeEtab = ? AND anneeSession = ?',
-      whereArgs: [codeEtab, anneeSession],
+      where: conditions.join(' AND '),
+      whereArgs: args,
     );
     return rows.map(QuotaMembre.fromMap).toList();
+  }
+
+  // ======================================================================
+  //  AttributionSalle (quota de candidats par établissement, par salle)
+  // ======================================================================
+
+  Future<void> definirAttributionSalle(AttributionSalle attribution) async {
+    final db = await database;
+    await db.insert(
+      tableAttributionSalle,
+      attribution.toMap(),
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  Future<List<AttributionSalle>> listerAttributionsSalle(
+    String codeSalle,
+  ) async {
+    final db = await database;
+    final rows = await db.query(
+      tableAttributionSalle,
+      where: 'codeSalle = ?',
+      whereArgs: [codeSalle],
+    );
+    return rows.map(AttributionSalle.fromMap).toList();
+  }
+
+  /// L'attribution d'un établissement donné dans une salle donnée (ou
+  /// null s'il n'a encore rien réservé dans cette salle).
+  Future<AttributionSalle?> lireAttributionSalle(
+    String codeSalle,
+    String codeEtab,
+  ) async {
+    final db = await database;
+    final rows = await db.query(
+      tableAttributionSalle,
+      where: 'codeSalle = ? AND codeEtab = ?',
+      whereArgs: [codeSalle, codeEtab],
+    );
+    if (rows.isEmpty) return null;
+    return AttributionSalle.fromMap(rows.first);
+  }
+
+  Future<void> supprimerAttributionSalle(String id) async {
+    final db = await database;
+    await db.delete(tableAttributionSalle, where: 'id = ?', whereArgs: [id]);
+  }
+
+  // ======================================================================
+  //  PeriodeSaisie (fenêtre de saisie autorisée, définie par l'admin)
+  // ======================================================================
+
+  Future<void> definirPeriodeSaisie(PeriodeSaisie periode) async {
+    final db = await database;
+    await db.insert(
+      tablePeriodeSaisie,
+      periode.toMap(),
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  Future<PeriodeSaisie?> lirePeriodeSaisie() async {
+    final db = await database;
+    final rows = await db.query(
+      tablePeriodeSaisie,
+      where: 'id = ?',
+      whereArgs: [PeriodeSaisie.idGlobal],
+    );
+    if (rows.isEmpty) return null;
+    return PeriodeSaisie.fromMap(rows.first);
   }
 
   // ======================================================================
@@ -671,6 +878,54 @@ class SqliteService {
       orderBy: 'horodatage ASC',
     );
     return rows.map(ChatMessage.fromMap).toList();
+  }
+
+  /// Modifie le texte d'un message existant (marque `modifie = 1`).
+  Future<void> modifierMessageChat(String id, String nouveauTexte) async {
+    final db = await database;
+    await db.update(
+      tableChatMessage,
+      {'texte': nouveauTexte, 'modifie': 1},
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+  }
+
+  /// Supprime définitivement un message.
+  Future<void> supprimerMessageChat(String id) async {
+    final db = await database;
+    await db.delete(tableChatMessage, where: 'id = ?', whereArgs: [id]);
+  }
+
+  /// Nombre de messages non lus dans une conversation, envoyés par
+  /// quelqu'un d'autre que [expediteur] (utilisé pour la pastille de
+  /// notification).
+  Future<int> compterMessagesNonLus(
+    String codeEtab, {
+    required String saufExpediteur,
+  }) async {
+    final db = await database;
+    final result = await db.rawQuery(
+      'SELECT COUNT(*) AS n FROM $tableChatMessage '
+      'WHERE codeEtab = ? AND lu = 0 AND expediteur != ?',
+      [codeEtab, saufExpediteur],
+    );
+    return (result.first['n'] as int?) ?? 0;
+  }
+
+  /// Marque tous les messages d'une conversation comme lus (sauf ceux
+  /// envoyés par [saufExpediteur], qui n'ont pas besoin de l'être).
+  Future<void> marquerMessagesLus(
+    String codeEtab, {
+    required String saufExpediteur,
+  }) async {
+    final db = await database;
+    await db.update(
+      tableChatMessage,
+      {'lu': 1},
+      where: 'codeEtab = ? AND expediteur != ?',
+      whereArgs: [codeEtab, saufExpediteur],
+    );
   }
 
   /// Liste des établissements ayant au moins un message, avec le dernier

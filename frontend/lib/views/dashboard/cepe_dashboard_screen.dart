@@ -16,15 +16,19 @@ class CepeDashboardScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Dashboard CEPE')),
-      floatingActionButton: FloatingActionButton(
-        backgroundColor: Colors.green,
-        onPressed: () => Navigator.of(context).push(
-          MaterialPageRoute(
-            builder: (_) => const ListesMenuScreen(pourCepe: true),
+      appBar: AppBar(
+        title: const Text('Dashboard CEPE'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.add),
+            tooltip: 'Listes de référence (établissements...)',
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute(
+                builder: (_) => const ListesMenuScreen(pourCepe: true),
+              ),
+            ),
           ),
-        ),
-        child: const Icon(Icons.add, color: Colors.white),
+        ],
       ),
       body: ListView(
         padding: const EdgeInsets.all(16),

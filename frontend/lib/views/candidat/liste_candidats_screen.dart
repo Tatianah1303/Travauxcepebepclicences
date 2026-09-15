@@ -85,7 +85,7 @@ class _ListeCandidatsScreenState extends State<ListeCandidatsScreen> {
             'Groupe',
             'Langue',
             'École origine',
-            'Née vert',
+            'Née vers',
             'État',
           ],
           lignes: _bepc

@@ -16,7 +16,8 @@ import '../../utils/photo_helper.dart';
 /// proposé — un seul rôle à la fois). La désignation capture immédiatement
 /// la photo CIN recto/verso, et le membre passe à l'état "Identifié".
 class DesignationMembreScreen extends StatefulWidget {
-  const DesignationMembreScreen({super.key});
+  final String typeExamen;
+  const DesignationMembreScreen({super.key, required this.typeExamen});
 
   @override
   State<DesignationMembreScreen> createState() =>
@@ -46,9 +47,11 @@ class _DesignationMembreScreenState extends State<DesignationMembreScreen> {
     final quotas = await SqliteService.instance.listerQuotas(
       codeEtab: _codeEtab,
       anneeSession: _anneeSession,
+      typeExamen: widget.typeExamen,
     );
     final tousMembres = await SqliteService.instance.listerMembres(
       anneeSession: _anneeSession,
+      typeExamen: widget.typeExamen,
     );
 
     // Ne garder que les membres dont l'enseignant appartient à cet établissement
@@ -164,6 +167,7 @@ class _DesignationMembreScreenState extends State<DesignationMembreScreen> {
       photoCinRecto: recto,
       photoCinVerso: verso,
       anneeSession: _anneeSession,
+      typeExamen: widget.typeExamen,
     );
 
     await SqliteService.instance.insererMembre(membre);
@@ -184,7 +188,7 @@ class _DesignationMembreScreenState extends State<DesignationMembreScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Désignation des membres prévisionnels'),
+        title: Text('Désignation des membres — ${widget.typeExamen}'),
       ),
       body: ListView(
         padding: const EdgeInsets.all(16),

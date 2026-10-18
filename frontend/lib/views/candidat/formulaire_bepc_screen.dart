@@ -2,10 +2,13 @@ import 'package:flutter/material.dart';
 
 import '../../models/candidat_bepc.dart';
 import '../../models/item_liste.dart';
-import '../../services/sqlite_service.dart';
+import '../../services/firestore_service.dart';
+import '../../services/firestore_listes_service.dart';
+import '../../services/listes_locales.dart';
 import '../../services/app_session.dart';
 import '../../data/liste_reference.dart';
 import '../../utils/photo_helper.dart';
+import '../../services/firebase_storage_service.dart';
 import '../../widgets/erreur_banniere.dart';
 import '../../widgets/section_card.dart';
 import '../../widgets/date_input_formatter.dart';
@@ -18,7 +21,7 @@ import '../../utils/verification_periode_saisie.dart';
 /// - Lycée d'accueil (au lieu de CEG d'accueil), actif si groupe = I ou II
 /// - langue active seulement si groupe = I
 /// - groupe = III -> numéro d'inscription BEPC de l'année précédente requis
-/// - champ neeVert (0 = pas de copie, 1 = a une copie), toujours affiché
+/// - champ « Née vers » : Non (0) ou Oui (-1), toujours affiché
 class FormulaireBepcScreen extends StatefulWidget {
   const FormulaireBepcScreen({super.key});
 
@@ -35,8 +38,6 @@ class _FormulaireBepcScreenState extends State<FormulaireBepcScreen> {
   final _prenomController = TextEditingController();
   final _lieuNaissanceController = TextEditingController();
   final _adresseController = TextEditingController();
-  final _nomPereController = TextEditingController();
-  final _nomMereController = TextEditingController();
   final _numeroAnneePrecedenteController = TextEditingController();
 
   DateTime? _dateNaissance;
@@ -63,6 +64,9 @@ class _FormulaireBepcScreenState extends State<FormulaireBepcScreen> {
   List<ItemListe> _lyceesAccueil = [];
   List<ItemListe> _centresEcrit = [];
   List<ItemListe> _centresCorrection = [];
+  List<String> _groupes = ['I', 'II', 'III'];
+  List<String> _typesHandicap = List.of(typesHandicap);
+  List<String> _langues = List.of(langues);
 
   bool _enregistrement = false;
 
@@ -77,25 +81,83 @@ class _FormulaireBepcScreenState extends State<FormulaireBepcScreen> {
   }
 
   Future<void> _chargerListes() async {
-    final ecoles = await SqliteService.instance.listerItems('ecoleOrigineBepc');
-    final lycees = await SqliteService.instance.listerItems('lyceeAccueil');
-    final centresEcrit = await SqliteService.instance.listerItems(
-      'centreEcritBepc',
-    );
-    final centresCorrection = await SqliteService.instance.listerItems(
-      'centreCorrectionBepc',
-    );
-    setState(() {
-      _ecolesOrigine = ecoles;
-      _lyceesAccueil = lycees;
-      _centresEcrit = centresEcrit;
-      _centresCorrection = centresCorrection;
-    });
+    try {
+      final remote = await Future.wait([
+        ListesLocales.charger('ecoleOrigineBepc'),
+        ListesLocales.charger('lyceeAccueil'),
+        ListesLocales.charger('centreEcritBepc'),
+        ListesLocales.charger('centreCorrectionBepc'),
+        ListesLocales.charger('groupeBepc'),
+        ListesLocales.charger('typeHandicap'),
+        ListesLocales.charger('langue'),
+      ]);
+      if (!mounted) return;
+      setState(() {
+        _ecolesOrigine = remote[0];
+        _lyceesAccueil = remote[1];
+        _centresEcrit = remote[2];
+        _centresCorrection = remote[3];
+        final groupes = ListesLocales.sansDoublons(
+          remote[4],
+        ).map((e) => e.champs['code']!).toList()..sort();
+        if (groupes.isNotEmpty) {
+          _groupes = groupes;
+          if (!groupes.contains(_groupe)) _groupe = groupes.first;
+        }
+        final handicaps =
+            remote[5]
+                .map((e) => e.champs['libelle'])
+                .whereType<String>()
+                .toSet()
+                .toList()
+              ..sort();
+        if (handicaps.isNotEmpty) {
+          _typesHandicap = handicaps;
+          if (!handicaps.contains(_typeHandicap)) _typeHandicap = null;
+        }
+        final langs =
+            remote[6]
+                .map((e) => e.champs['libelle'])
+                .whereType<String>()
+                .toSet()
+                .toList()
+              ..sort();
+        if (langs.isNotEmpty) {
+          _langues = langs;
+          if (!langs.contains(_langue)) _langue = null;
+        }
+        if (_centresCorrection.length == 1) {
+          final unique = _centresCorrection.first.champs['code'];
+          _codeCentreCorrection = unique;
+          final ecrits = _centresEcrit
+              .where((c) => c.champs['codecorrection'] == unique)
+              .toList();
+          if (ecrits.length == 1)
+            _codeCentreEcrit = ecrits.first.champs['code'];
+        }
+      });
+    } catch (e) {
+      if (mounted) {
+        setState(
+          () => _messageErreur =
+              'Impossible de charger les listes Firestore. Vérifiez la connexion et l’initialisation admin : $e',
+        );
+      }
+    }
   }
 
   Future<void> _prendrePhoto() async {
     final path = await prendrePhotoOuChoisirFichier();
-    if (path != null) setState(() => _photoPath = path);
+    if (path == null) return;
+    if (!mounted) {
+      await FirebaseStorageService.supprimerPhotoTemporaire(path);
+      return;
+    }
+    final ancienne = _photoPath;
+    if (ancienne != null) {
+      await FirebaseStorageService.supprimerPhotoTemporaire(ancienne);
+    }
+    if (mounted) setState(() => _photoPath = path);
   }
 
   void _lireDateNaissance(String v) {
@@ -147,10 +209,6 @@ class _FormulaireBepcScreenState extends State<FormulaireBepcScreen> {
       _erreur('Prenez une photo du candidat');
       return;
     }
-    if (_nomMereController.text.trim().isEmpty) {
-      _erreur('Le nom de la mère est obligatoire');
-      return;
-    }
     if (_lieuNaissanceController.text.trim().isEmpty) {
       _erreur('Le lieu de naissance est obligatoire');
       return;
@@ -159,9 +217,41 @@ class _FormulaireBepcScreenState extends State<FormulaireBepcScreen> {
     setState(() => _enregistrement = true);
 
     final now = DateTime.now();
-    final candidats = await SqliteService.instance.listerCandidatsBepc(
-      anneeSession: now.year,
-    );
+    final codeCandidat = 'BEPC_${now.millisecondsSinceEpoch}';
+    final codeEtab = AppSession.instance.codeEtab ?? '';
+    late final String photoUrl;
+    try {
+      photoUrl = await FirebaseStorageService.envoyerPhoto(
+        cheminLocal: _photoPath!,
+        cheminCloudSansExtension: 'candidats/$codeEtab/bepc/$codeCandidat',
+      );
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _enregistrement = false;
+          _photoPath = null;
+        });
+        _erreur('Échec du traitement de la photo : $e');
+      }
+      return;
+    }
+    late final List<CandidatBepc> candidats;
+    try {
+      candidats = await FirestoreService.instance.listerCandidatsBepc(
+        codeEtab: AppSession.instance.codeEtab ?? '',
+      );
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _enregistrement = false;
+          _photoPath = null;
+        });
+        _erreur(
+          'Impossible de lire Firestore pour le numéro du candidat : $e. Reprenez la photo avant de réessayer.',
+        );
+      }
+      return;
+    }
 
     // "Née vers" : si -1, l'année de naissance saisie est décalée d'un an
     // en arrière dans la base (ex: saisi 2024 + "-1" => 2023 enregistré).
@@ -172,7 +262,7 @@ class _FormulaireBepcScreenState extends State<FormulaireBepcScreen> {
     );
 
     final candidat = CandidatBepc(
-      codeCandidat: 'BEPC_${now.millisecondsSinceEpoch}',
+      codeCandidat: codeCandidat,
       numero: candidats.length + 1,
       nom: _nomController.text.trim(),
       prenom: _prenomController.text.trim(),
@@ -182,10 +272,8 @@ class _FormulaireBepcScreenState extends State<FormulaireBepcScreen> {
       sexe: _sexe,
       handicap: _handicap,
       typeHandicap: _handicap ? _typeHandicap : null,
-      nomPere: _nomPereController.text.trim().isEmpty
-          ? null
-          : _nomPereController.text.trim(),
-      nomMere: _nomMereController.text.trim(),
+      nomPere: null,
+      nomMere: '',
       groupe: _groupe,
       langue: _langueActive ? _langue : null,
       numeroInscriptionAnneePrecedente: _groupeIII
@@ -201,17 +289,32 @@ class _FormulaireBepcScreenState extends State<FormulaireBepcScreen> {
       epreuveObligatoire: _eps ? epreuveObligatoireSelonSexe(_sexe) : null,
       epreuveAuChoix: _eps ? _epreuveAuChoix : null,
       epreuveCollective: _eps ? _epreuveCollective : null,
-      photo: _photoPath!,
+      photo: photoUrl,
       etatCandidat: 'Inscrit',
       anneeSession: now.year,
     );
 
-    await SqliteService.instance.insererCandidatBepc(candidat);
+    try {
+      await FirestoreService.instance.ajouterCandidatBepc(candidat);
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _enregistrement = false;
+          _photoPath = null;
+        });
+        _erreur(
+          'Échec de l’enregistrement Firestore : $e. Reprenez la photo avant de réessayer.',
+        );
+      }
+      return;
+    }
 
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text('Candidat "${candidat.nom} ${candidat.prenom}" enregistré'),
+        content: Text(
+          'Candidat "${candidat.nom} ${candidat.prenom}" enregistré',
+        ),
         backgroundColor: Colors.green,
       ),
     );
@@ -219,16 +322,24 @@ class _FormulaireBepcScreenState extends State<FormulaireBepcScreen> {
     // Le formulaire reste ouvert et les centres (écrit/correction) restent
     // sélectionnés car on inscrit en général plusieurs candidats du même
     // centre à la suite. Seuls les champs propres au candidat sont vidés.
+    // reset() relance les « onChanged » des menus et efface les centres :
+    // on mémorise donc les choix communs aux candidats suivants, puis on les remet.
+    final gardeCorrection = _codeCentreCorrection;
+    final gardeEcrit = _codeCentreEcrit;
+    final gardeEcole = _codeEcoleOrigine;
+    final gardeAccueil = _codeLyceeAccueil;
     _formKey.currentState!.reset();
     _nomController.clear();
     _prenomController.clear();
     _lieuNaissanceController.clear();
     _adresseController.clear();
-    _nomPereController.clear();
-    _nomMereController.clear();
     _numeroAnneePrecedenteController.clear();
     _dateNaissanceController.clear();
     setState(() {
+      _codeCentreCorrection = gardeCorrection;
+      _codeCentreEcrit = gardeEcrit;
+      _codeEcoleOrigine = gardeEcole;
+      _codeLyceeAccueil = gardeAccueil;
       _dateNaissance = null;
       _sexe = 'G';
       _handicap = false;
@@ -254,6 +365,13 @@ class _FormulaireBepcScreenState extends State<FormulaireBepcScreen> {
       duration: const Duration(milliseconds: 300),
       curve: Curves.easeOut,
     );
+  }
+
+  @override
+  void dispose() {
+    final chemin = _photoPath;
+    if (chemin != null) FirebaseStorageService.supprimerPhotoTemporaire(chemin);
+    super.dispose();
   }
 
   @override
@@ -302,63 +420,71 @@ class _FormulaireBepcScreenState extends State<FormulaireBepcScreen> {
               titre: 'Centres',
               icone: Icons.apartment,
               enfants: [
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Expanded(
-                      child: DropdownButtonFormField<String>(
-                        initialValue: _codeCentreEcrit,
-                        decoration: const InputDecoration(
-                          labelText: 'Centre d’écrit *',
-                          border: OutlineInputBorder(),
+                DropdownButtonFormField<String>(
+                  key: ValueKey('corr_$_codeCentreCorrection'),
+                  initialValue: _codeCentreCorrection,
+                  decoration: const InputDecoration(
+                    labelText: 'Centre de correction *',
+                    border: OutlineInputBorder(),
+                  ),
+                  items: _centresCorrection
+                      .where((c) => c.champs['code'] != null)
+                      .map(
+                        (c) => DropdownMenuItem<String>(
+                          value: c.champs['code'],
+                          child: Text(
+                            c.champs['libelle'] ?? c.champs['code'] ?? '',
+                            overflow: TextOverflow.ellipsis,
+                          ),
                         ),
-                        items: _centresEcrit
-                            .map(
-                              (c) => DropdownMenuItem(
-                                value: c.champs['code'],
-                                child: Text(
-                                  c.champs['libelle'] ??
-                                      c.champs['nom'] ??
-                                      c.champs['code'] ??
-                                      '',
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                              ),
-                            )
-                            .toList(),
-                        validator: (v) => v == null ? 'Obligatoire' : null,
-                        onChanged: (v) =>
-                            setState(() => _codeCentreEcrit = v),
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: DropdownButtonFormField<String>(
-                        initialValue: _codeCentreCorrection,
-                        decoration: const InputDecoration(
-                          labelText: 'Centre de correction *',
-                          border: OutlineInputBorder(),
+                      )
+                      .toList(),
+                  validator: (v) => v == null ? 'Obligatoire' : null,
+                  onChanged: (v) => setState(() {
+                    _codeCentreCorrection = v;
+                    final ecrits = _centresEcrit
+                        .where((c) => c.champs['codecorrection'] == v)
+                        .toList();
+                    _codeCentreEcrit = ecrits.length == 1
+                        ? ecrits.first.champs['code']
+                        : null;
+                    _codeEcoleOrigine = null;
+                  }),
+                ),
+                const SizedBox(height: 12),
+                DropdownButtonFormField<String>(
+                  key: ValueKey(
+                    'ecrit_${_codeCentreCorrection}_$_codeCentreEcrit',
+                  ),
+                  initialValue: _codeCentreEcrit,
+                  decoration: const InputDecoration(
+                    labelText: 'Centre d’écrit *',
+                    border: OutlineInputBorder(),
+                  ),
+                  items: _centresEcrit
+                      .where(
+                        (c) =>
+                            c.champs['code'] != null &&
+                            (_codeCentreCorrection == null ||
+                                c.champs['codecorrection'] ==
+                                    _codeCentreCorrection),
+                      )
+                      .map(
+                        (c) => DropdownMenuItem<String>(
+                          value: c.champs['code'],
+                          child: Text(
+                            c.champs['libelle'] ?? c.champs['code'] ?? '',
+                            overflow: TextOverflow.ellipsis,
+                          ),
                         ),
-                        items: _centresCorrection
-                            .map(
-                              (c) => DropdownMenuItem(
-                                value: c.champs['code'],
-                                child: Text(
-                                  c.champs['libelle'] ??
-                                      c.champs['nom'] ??
-                                      c.champs['code'] ??
-                                      '',
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                              ),
-                            )
-                            .toList(),
-                        validator: (v) => v == null ? 'Obligatoire' : null,
-                        onChanged: (v) =>
-                            setState(() => _codeCentreCorrection = v),
-                      ),
-                    ),
-                  ],
+                      )
+                      .toList(),
+                  validator: (v) => v == null ? 'Obligatoire' : null,
+                  onChanged: (v) => setState(() {
+                    _codeCentreEcrit = v;
+                    _codeEcoleOrigine =
+                        null; // l'école dépend du centre d'écrit
+                  }),
                 ),
               ],
             ),
@@ -367,34 +493,23 @@ class _FormulaireBepcScreenState extends State<FormulaireBepcScreen> {
               titre: 'Identité du candidat',
               icone: Icons.badge,
               enfants: [
-                Row(
-                  children: [
-                    Expanded(
-                      child: TextFormField(
-                        controller: _nomController,
-                        decoration: const InputDecoration(
-                          labelText: 'Nom *',
-                          border: OutlineInputBorder(),
-                        ),
-                        validator: (v) => (v == null || v.trim().isEmpty)
-                            ? 'Obligatoire'
-                            : null,
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: TextFormField(
-                        controller: _prenomController,
-                        decoration: const InputDecoration(
-                          labelText: 'Prénom *',
-                          border: OutlineInputBorder(),
-                        ),
-                        validator: (v) => (v == null || v.trim().isEmpty)
-                            ? 'Obligatoire'
-                            : null,
-                      ),
-                    ),
-                  ],
+                TextFormField(
+                  controller: _nomController,
+                  decoration: const InputDecoration(
+                    labelText: 'Nom *',
+                    border: OutlineInputBorder(),
+                  ),
+                  validator: (v) =>
+                      (v == null || v.trim().isEmpty) ? 'Obligatoire' : null,
+                ),
+                TextFormField(
+                  controller: _prenomController,
+                  decoration: const InputDecoration(
+                    labelText: 'Prénom *',
+                    border: OutlineInputBorder(),
+                  ),
+                  validator: (v) =>
+                      (v == null || v.trim().isEmpty) ? 'Obligatoire' : null,
                 ),
                 Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -409,7 +524,8 @@ class _FormulaireBepcScreenState extends State<FormulaireBepcScreen> {
                           hintText: 'jj/mm/aaaa',
                           border: OutlineInputBorder(),
                         ),
-                        validator: (v) => (v == null ||
+                        validator: (v) =>
+                            (v == null ||
                                 !RegExp(
                                   r'^\d{2}/\d{2}/\d{4}$',
                                 ).hasMatch(v.trim()))
@@ -432,8 +548,9 @@ class _FormulaireBepcScreenState extends State<FormulaireBepcScreen> {
                           const SizedBox(height: 4),
                           SegmentedButton<int>(
                             segments: const [
-                              ButtonSegment(value: 0, label: Text('0')),
-                              ButtonSegment(value: -1, label: Text('-1')),
+                              // Non = 0 (année inchangée) ; Oui = -1 (année décalée d'un an)
+                              ButtonSegment(value: 0, label: Text('Non')),
+                              ButtonSegment(value: -1, label: Text('Oui')),
                             ],
                             selected: {_neeVert},
                             onSelectionChanged: (v) =>
@@ -489,29 +606,6 @@ class _FormulaireBepcScreenState extends State<FormulaireBepcScreen> {
             ),
 
             SectionCard(
-              titre: 'Filiation',
-              icone: Icons.family_restroom,
-              enfants: [
-                TextFormField(
-                  controller: _nomPereController,
-                  decoration: const InputDecoration(
-                    labelText: 'Nom du père (facultatif)',
-                    border: OutlineInputBorder(),
-                  ),
-                ),
-                TextFormField(
-                  controller: _nomMereController,
-                  decoration: const InputDecoration(
-                    labelText: 'Nom de la mère *',
-                    border: OutlineInputBorder(),
-                  ),
-                  validator: (v) =>
-                      (v == null || v.trim().isEmpty) ? 'Obligatoire' : null,
-                ),
-              ],
-            ),
-
-            SectionCard(
               titre: 'Handicap',
               icone: Icons.accessible,
               enfants: [
@@ -537,7 +631,7 @@ class _FormulaireBepcScreenState extends State<FormulaireBepcScreen> {
                       labelText: 'Type de handicap *',
                       border: OutlineInputBorder(),
                     ),
-                    items: typesHandicap
+                    items: _typesHandicap
                         .map((t) => DropdownMenuItem(value: t, child: Text(t)))
                         .toList(),
                     onChanged: (v) => setState(() => _typeHandicap = v),
@@ -555,7 +649,7 @@ class _FormulaireBepcScreenState extends State<FormulaireBepcScreen> {
                     labelText: 'Groupe *',
                     border: OutlineInputBorder(),
                   ),
-                  items: const ['I', 'II', 'III']
+                  items: _groupes
                       .map(
                         (g) => DropdownMenuItem(
                           value: g,
@@ -579,12 +673,12 @@ class _FormulaireBepcScreenState extends State<FormulaireBepcScreen> {
                     ),
                   ),
                 DropdownButtonFormField<String>(
-                  value: _langue,
+                  value: _langueActive ? _langue : null,
                   decoration: InputDecoration(
                     labelText: _langueActive ? 'Langue *' : 'Langue',
                     border: const OutlineInputBorder(),
                   ),
-                  items: langues
+                  items: _langues
                       .map((l) => DropdownMenuItem(value: l, child: Text(l)))
                       .toList(),
                   onChanged: _langueActive
@@ -592,22 +686,34 @@ class _FormulaireBepcScreenState extends State<FormulaireBepcScreen> {
                       : null,
                 ),
                 DropdownButtonFormField<String>(
+                  key: ValueKey('ecole_$_codeCentreEcrit'),
                   value: _codeEcoleOrigine,
                   decoration: const InputDecoration(
                     labelText: 'École d\'origine *',
                     border: OutlineInputBorder(),
                   ),
-                  items: _ecolesOrigine
-                      .map(
-                        (e) => DropdownMenuItem(
-                          value: e.champs['code'],
-                          child: Text(
-                            e.champs['nom'] ?? e.champs['code'] ?? '',
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                      )
-                      .toList(),
+                  items:
+                      ListesLocales.sansDoublons(
+                            _ecolesOrigine
+                                .where(
+                                  (e) =>
+                                      e.champs['code'] != null &&
+                                      (_codeCentreEcrit == null ||
+                                          e.champs['codeCentre'] ==
+                                              _codeCentreEcrit),
+                                )
+                                .toList(),
+                          )
+                          .map(
+                            (e) => DropdownMenuItem<String>(
+                              value: e.champs['code'] as String,
+                              child: Text(
+                                e.champs['nom'] ?? e.champs['code'] ?? '',
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                          )
+                          .toList(),
                   onChanged: (v) => setState(() => _codeEcoleOrigine = v),
                 ),
                 DropdownButtonFormField<String>(
@@ -619,9 +725,10 @@ class _FormulaireBepcScreenState extends State<FormulaireBepcScreen> {
                     border: const OutlineInputBorder(),
                   ),
                   items: _lyceesAccueil
+                      .where((l) => l.champs['code'] != null)
                       .map(
-                        (l) => DropdownMenuItem(
-                          value: l.champs['code'],
+                        (l) => DropdownMenuItem<String>(
+                          value: l.champs['code'] as String,
                           child: Text(
                             l.champs['libelle'] ?? l.champs['code'] ?? '',
                             overflow: TextOverflow.ellipsis,
@@ -647,9 +754,7 @@ class _FormulaireBepcScreenState extends State<FormulaireBepcScreen> {
                       ? const Text('Verrouillé (candidat handicapé)')
                       : null,
                   value: _eps,
-                  onChanged: _handicap
-                      ? null
-                      : (v) => setState(() => _eps = v),
+                  onChanged: _handicap ? null : (v) => setState(() => _eps = v),
                 ),
                 if (_eps) ...[
                   ListTile(

@@ -1,8 +1,8 @@
-import 'dart:io';
 import 'package:flutter/material.dart';
 
 import '../../models/chat_message.dart';
-import '../../services/local_chat_service.dart';
+import '../../services/firestore_chat_service.dart';
+import '../../services/firebase_storage_service.dart';
 import '../../utils/photo_helper.dart';
 
 /// Écran de discussion, réutilisé côté établissement et côté admin.
@@ -39,7 +39,10 @@ class _ChatThreadScreenState extends State<ChatThreadScreen> {
     super.initState();
     // On marque la conversation comme lue dès qu'on l'ouvre (fait partie
     // du système de notification : la pastille "non lus" disparaît).
-    LocalChatService.marquerLus(widget.codeEtab, moi: widget.expediteurActuel);
+    FirestoreChatService.marquerLus(
+      widget.codeEtab,
+      moi: widget.expediteurActuel,
+    );
   }
 
   void _descendreEnBas() {
@@ -59,7 +62,7 @@ class _ChatThreadScreenState extends State<ChatThreadScreen> {
     if (texte.isEmpty) return;
     _controller.clear();
 
-    await LocalChatService.envoyerMessage(
+    await FirestoreChatService.envoyerMessage(
       codeEtab: widget.codeEtab,
       expediteur: widget.expediteurActuel,
       texte: texte,
@@ -73,13 +76,24 @@ class _ChatThreadScreenState extends State<ChatThreadScreen> {
     try {
       final chemin = await prendrePhotoOuChoisirFichier();
       if (chemin == null) return;
-      await LocalChatService.envoyerMessage(
+      final url = await FirebaseStorageService.envoyerPhoto(
+        cheminLocal: chemin,
+        cheminCloudSansExtension:
+            'chat/${widget.codeEtab}/${DateTime.now().microsecondsSinceEpoch}',
+      );
+      await FirestoreChatService.envoyerMessage(
         codeEtab: widget.codeEtab,
         expediteur: widget.expediteurActuel,
         texte: '',
-        photoPath: chemin,
+        photoPath: url,
       );
       _descendreEnBas();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Échec de l’envoi de la photo : $e')),
+        );
+      }
     } finally {
       if (mounted) setState(() => _envoiEnCours = false);
     }
@@ -110,7 +124,11 @@ class _ChatThreadScreenState extends State<ChatThreadScreen> {
       ),
     );
     if (nouveauTexte == null || nouveauTexte.isEmpty) return;
-    await LocalChatService.modifierMessage(widget.codeEtab, m.id, nouveauTexte);
+    await FirestoreChatService.modifierMessage(
+      widget.codeEtab,
+      m.id,
+      nouveauTexte,
+    );
   }
 
   Future<void> _supprimer(ChatMessage m) async {
@@ -133,7 +151,7 @@ class _ChatThreadScreenState extends State<ChatThreadScreen> {
       ),
     );
     if (confirme != true) return;
-    await LocalChatService.supprimerMessage(widget.codeEtab, m.id);
+    await FirestoreChatService.supprimerMessage(widget.codeEtab, m.id);
   }
 
   void _ouvrirOptions(ChatMessage m) {
@@ -174,7 +192,7 @@ class _ChatThreadScreenState extends State<ChatThreadScreen> {
         children: [
           Expanded(
             child: StreamBuilder<List<ChatMessage>>(
-              stream: LocalChatService.ecouterMessages(widget.codeEtab),
+              stream: FirestoreChatService.ecouterMessages(widget.codeEtab),
               builder: (context, snapshot) {
                 if (snapshot.connectionState == ConnectionState.waiting) {
                   return const Center(child: CircularProgressIndicator());
@@ -230,8 +248,12 @@ class _ChatThreadScreenState extends State<ChatThreadScreen> {
                               if (m.photoPath != null)
                                 ClipRRect(
                                   borderRadius: BorderRadius.circular(10),
-                                  child: Image.file(
-                                    File(m.photoPath!),
+                                  child: Image(
+                                    image:
+                                        imageDepuisPhoto(m.photoPath) ??
+                                        const AssetImage(
+                                          'assets/images/logo.jpg',
+                                        ),
                                     fit: BoxFit.cover,
                                     errorBuilder: (_, __, ___) => Container(
                                       width: 160,

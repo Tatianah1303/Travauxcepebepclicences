@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 
-import '../listes/listes_menu_screen.dart';
 import '../candidat/formulaire_bepc_screen.dart';
 import '../candidat/liste_candidats_screen.dart';
 import 'statistiques_examen_screen.dart';
@@ -16,20 +15,7 @@ class BepcDashboardScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Dashboard BEPC'),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.add),
-            tooltip: 'Listes de référence (établissements...)',
-            onPressed: () => Navigator.of(context).push(
-              MaterialPageRoute(
-                builder: (_) => const ListesMenuScreen(pourCepe: false),
-              ),
-            ),
-          ),
-        ],
-      ),
+      appBar: AppBar(title: const Text('Dashboard BEPC')),
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [

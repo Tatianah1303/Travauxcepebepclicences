@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "1037842173831",
+    "project_id": "travauxcepebepclicencel3",
+    "storage_bucket": "travauxcepebepclicencel3.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:1037842173831:android:41e82ef7d3725b60504d22",
+        "android_client_info": {
+          "package_name": "com.example.frontend"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyA9yCV1X9CX_QBl442IbuZLZ704K-XSNoA"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

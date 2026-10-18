@@ -7,7 +7,7 @@
 ///   (role ∈ {Jury, Correcteur, ChefDeCentre, Securite}).
 /// - Les photos CIN recto/verso sont prises seulement au moment où
 ///   l'enseignant s'identifie comme membre (pas avant, pas sur Enseignant).
-/// - etat suit le cycle : Désigné → Identifié → En poste → Présent / Absent
+/// - etat suit le cycle : Désigné → Identifié → En activité → Présent / Absent
 /// - anneeSession permet de distinguer les sessions d'une année à l'autre
 ///   (et de les archiver/supprimer indépendamment, cf. diagramme d'archivage)
 class MembrePrevisionnel {
@@ -19,8 +19,12 @@ class MembrePrevisionnel {
   /// 'Jury', 'Correcteur', 'ChefDeCentre' ou 'Securite'
   final String role;
 
-  /// 'Désigné', 'Identifié', 'En poste', 'Présent' ou 'Absent'
+  /// 'Désigné', 'Identifié', 'En activité', 'Présent' ou 'Absent'
   final String etat;
+
+  /// État affiché à l'utilisateur : « En poste » (ancien libellé) devient
+  /// « En activité ».
+  String get etatAffiche => etat == 'En poste' ? 'En activité' : etat;
 
   /// Renseignées seulement au moment de l'identification (vérification
   /// d'identité), pas avant.
@@ -41,6 +45,16 @@ class MembrePrevisionnel {
   /// membre est désigné).
   final String typeExamen;
 
+  /// Établissement qui a saisi ce membre (lu depuis Firestore ; absent des
+  /// anciennes données locales).
+  final String? codeEtab;
+
+  /// Identité de l'enseignant COPIÉE au moment de la désignation : le nom
+  /// reste affichable même si la fiche enseignant est modifiée ou supprimée.
+  final String? nom;
+  final String? prenom;
+  final String? localite;
+
   const MembrePrevisionnel({
     required this.codeMembre,
     required this.matriculeEnseignant,
@@ -52,6 +66,10 @@ class MembrePrevisionnel {
     this.codeCentreCorrection,
     required this.anneeSession,
     required this.typeExamen,
+    this.codeEtab,
+    this.nom,
+    this.prenom,
+    this.localite,
   });
 
   Map<String, Object?> toMap() {
@@ -66,6 +84,9 @@ class MembrePrevisionnel {
       'codeCentreCorrection': codeCentreCorrection,
       'anneeSession': anneeSession,
       'typeExamen': typeExamen,
+      if (nom != null) 'nom': nom,
+      if (prenom != null) 'prenom': prenom,
+      if (localite != null) 'localite': localite,
     };
   }
 
@@ -84,6 +105,10 @@ class MembrePrevisionnel {
       // par défaut (valeur la plus fréquente), à corriger manuellement si
       // besoin.
       typeExamen: (map['typeExamen'] as String?) ?? 'CEPE',
+      codeEtab: map['codeEtab'] as String?,
+      nom: map['nom'] as String?,
+      prenom: map['prenom'] as String?,
+      localite: map['localite'] as String?,
     );
   }
 
@@ -108,6 +133,10 @@ class MembrePrevisionnel {
       codeCentreCorrection: codeCentreCorrection ?? this.codeCentreCorrection,
       anneeSession: anneeSession,
       typeExamen: typeExamen,
+      codeEtab: codeEtab,
+      nom: nom,
+      prenom: prenom,
+      localite: localite,
     );
   }
 }

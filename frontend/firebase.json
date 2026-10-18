@@ -1,0 +1,25 @@
+{
+  "flutter": {
+    "platforms": {
+      "android": {
+        "default": {
+          "projectId": "travauxcepebepclicencel3",
+          "appId": "1:1037842173831:android:41e82ef7d3725b60504d22",
+          "fileOutput": "android/app/google-services.json"
+        }
+      },
+      "dart": {
+        "lib/firebase_options.dart": {
+          "projectId": "travauxcepebepclicencel3",
+          "configurations": {
+            "android": "1:1037842173831:android:41e82ef7d3725b60504d22",
+            "windows": "1:1037842173831:web:989fa2a473711364504d22"
+          }
+        }
+      }
+    }
+  },
+  "storage": {
+    "rules": "storage.rules"
+  }
+}

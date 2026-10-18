@@ -1,0 +1,117 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function estConnecte() {
+      return request.auth != null;
+    }
+
+    function estAdmin() {
+      return estConnecte() &&
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid));
+    }
+
+    // ✅ CORRIGÉ : on lit le codeEtab depuis l'email Firebase Auth
+    // au lieu d'un get() sur etablissements_auth (incompatible avec LIST).
+    // Ex : "326020302@etab.srbhm-cisco.com" → "326020302"
+    function monCodeEtab() {
+      return request.auth.token.email.split('@')[0];
+    }
+
+    function estMonEtablissement(codeEtab) {
+      return estConnecte() && monCodeEtab() == codeEtab;
+    }
+
+    match /etablissements_auth/{uid} {
+      allow read: if estConnecte() && (request.auth.uid == uid || estAdmin());
+      allow create: if estConnecte() && request.auth.uid == uid;
+      allow update, delete: if false;
+    }
+
+    match /admins/{uid} {
+      allow read: if estAdmin();
+      allow write: if false;
+    }
+
+    match /candidats_cepe/{docId} {
+      allow read: if estAdmin() || estMonEtablissement(resource.data.codeEtab);
+      allow create: if estMonEtablissement(request.resource.data.codeEtab);
+      allow update: if estMonEtablissement(resource.data.codeEtab);
+      // L'admin doit pouvoir supprimer pour la clôture de session.
+      allow delete: if estAdmin() || estMonEtablissement(resource.data.codeEtab);
+    }
+
+    match /candidats_bepc/{docId} {
+      allow read: if estAdmin() || estMonEtablissement(resource.data.codeEtab);
+      allow create: if estMonEtablissement(request.resource.data.codeEtab);
+      allow update: if estMonEtablissement(resource.data.codeEtab);
+      // L'admin doit pouvoir supprimer pour la clôture de session.
+      allow delete: if estAdmin() || estMonEtablissement(resource.data.codeEtab);
+    }
+
+    match /enseignants/{docId} {
+      allow read: if estAdmin() || estMonEtablissement(resource.data.codeEtab);
+      allow create: if estMonEtablissement(request.resource.data.codeEtab);
+      allow update, delete: if estMonEtablissement(resource.data.codeEtab);
+    }
+
+    match /membres_previsionnels/{docId} {
+      allow read: if estAdmin() || estMonEtablissement(resource.data.codeEtab);
+      allow create: if estMonEtablissement(request.resource.data.codeEtab);
+      allow update: if estAdmin() ||
+        (estMonEtablissement(resource.data.codeEtab) &&
+         request.resource.data.codeEtab == resource.data.codeEtab &&
+         request.resource.data.diff(resource.data).affectedKeys()
+           .hasOnly(['etat', 'codeCentreEcrit', 'codeCentreCorrection']));
+      allow delete: if estAdmin() || estMonEtablissement(resource.data.codeEtab);
+    }
+
+    match /quotas_membres/{docId} {
+      allow read: if estAdmin() || estMonEtablissement(resource.data.codeEtab);
+      allow create, update: if estMonEtablissement(request.resource.data.codeEtab);
+      // L'admin supprime les quotas lors de la clôture de session.
+      allow delete: if estAdmin() || estMonEtablissement(resource.data.codeEtab);
+    }
+
+    match /salles/{docId} {
+      allow read: if estConnecte();
+      allow write: if estConnecte();
+    }
+
+    match /attributions_salle/{docId} {
+      allow read: if estConnecte();
+      allow create: if estMonEtablissement(request.resource.data.codeEtab);
+      allow update: if estMonEtablissement(resource.data.codeEtab) &&
+        request.resource.data.codeEtab == resource.data.codeEtab;
+      allow delete: if estAdmin() || estMonEtablissement(resource.data.codeEtab);
+    }
+
+    match /listes_reference/{docId} {
+      allow read: if estConnecte();
+      allow write: if estAdmin(); // ✅ CORRIGÉ : était !estAdmin() (bug)
+    }
+
+    match /periode_saisie/{docId} {
+      allow read: if estConnecte();
+      allow write: if estAdmin();
+    }
+
+    match /chat_messages/{docId} {
+      allow read: if estAdmin() || estMonEtablissement(resource.data.codeEtab);
+      allow create: if estAdmin() ||
+        (estMonEtablissement(request.resource.data.codeEtab) &&
+         request.resource.data.expediteur == 'etablissement');
+      allow update: if estAdmin() ||
+        (estMonEtablissement(resource.data.codeEtab) &&
+         resource.data.expediteur == 'etablissement');
+      allow delete: if estAdmin() ||
+        (estMonEtablissement(resource.data.codeEtab) &&
+         resource.data.expediteur == 'etablissement');
+    }
+
+    match /chat_conversations/{codeEtab} {
+      allow read: if estAdmin() || estMonEtablissement(codeEtab);
+      allow write: if estAdmin() || estMonEtablissement(codeEtab);
+    }
+  }
+}

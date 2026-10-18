@@ -1,6 +1,6 @@
 /// Modèle représentant un candidat au CEPE.
 ///
-/// Règles métier à respecter dans le formulaire (voir sqlite_service et
+/// Règles métier à respecter dans le formulaire (voir les règles de saisie et
 /// formulaire) :
 /// - groupe ∈ {A, B, C}
 /// - ecoleOrigine (établissement dont vient le candidat) : toujours renseigné

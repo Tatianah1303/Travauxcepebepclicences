@@ -1,11 +1,12 @@
 import 'package:flutter/material.dart';
+import '../../data/liste_etablissement.dart';
 
 import '../../models/periode_saisie.dart';
-import '../../services/sqlite_service.dart';
+import '../../services/firestore_service.dart';
 
 /// Permet à l'admin de définir UNE SEULE FOIS la fenêtre de saisie
 /// autorisée (date de début + date de clôture + description), visible
-/// aussitôt par les 45 établissements via la petite cloche de
+/// aussitôt par les établissements via la petite cloche de
 /// notification sur leur écran d'accueil — plus besoin d'envoyer un
 /// message individuel à chacun.
 class PeriodeSaisieScreen extends StatefulWidget {
@@ -30,7 +31,7 @@ class _PeriodeSaisieScreenState extends State<PeriodeSaisieScreen> {
   }
 
   Future<void> _charger() async {
-    final periode = await SqliteService.instance.lirePeriodeSaisie();
+    final periode = await FirestoreService.instance.lirePeriodeSaisie();
     setState(() {
       _periodeActuelle = periode;
       if (periode != null) {
@@ -89,7 +90,7 @@ class _PeriodeSaisieScreenState extends State<PeriodeSaisieScreen> {
     }
 
     setState(() => _enregistrement = true);
-    await SqliteService.instance.definirPeriodeSaisie(
+    await FirestoreService.instance.definirPeriodeSaisie(
       PeriodeSaisie(
         dateDebut: _dateDebut!,
         // On inclut toute la journée de fin (jusqu'à 23:59:59).
@@ -195,9 +196,11 @@ class _PeriodeSaisieScreenState extends State<PeriodeSaisieScreen> {
           ],
 
           const SizedBox(height: 20),
-          const Text(
-            'Nouvelle période',
-            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+          Text(
+            _periodeActuelle == null
+                ? 'Nouvelle période'
+                : 'Modifier la période',
+            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
           ),
           const SizedBox(height: 12),
 

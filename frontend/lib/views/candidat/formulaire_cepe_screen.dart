@@ -2,10 +2,13 @@ import 'package:flutter/material.dart';
 
 import '../../models/candidat_cepe.dart';
 import '../../models/item_liste.dart';
-import '../../services/sqlite_service.dart';
+import '../../services/firestore_service.dart';
+import '../../services/firestore_listes_service.dart';
+import '../../services/listes_locales.dart';
 import '../../services/app_session.dart';
 import '../../data/liste_reference.dart';
 import '../../utils/photo_helper.dart';
+import '../../services/firebase_storage_service.dart';
 import '../../widgets/erreur_banniere.dart';
 import '../../widgets/section_card.dart';
 import '../../widgets/date_input_formatter.dart';
@@ -56,6 +59,8 @@ class _FormulaireCepeScreenState extends State<FormulaireCepeScreen> {
   List<ItemListe> _cegAccueils = [];
   List<ItemListe> _centresEcrit = [];
   List<ItemListe> _centresCorrection = [];
+  List<String> _groupes = ['A', 'B', 'C'];
+  List<String> _typesHandicap = List.of(typesHandicap);
 
   bool _enregistrement = false;
 
@@ -68,27 +73,62 @@ class _FormulaireCepeScreenState extends State<FormulaireCepeScreen> {
   }
 
   Future<void> _chargerListes() async {
-    final ecoles = await SqliteService.instance.listerItems('ecoleOrigineCepe');
-    final ceg = await SqliteService.instance.listerItems('cegAccueil');
-    final centresEcrit = await SqliteService.instance.listerItems(
-      'centreEcritCepe',
-    );
-    final centresCorrection = await SqliteService.instance.listerItems(
-      'centreCorrectionCepe',
-    );
-    setState(() {
-      _ecolesOrigine = ecoles;
-      _cegAccueils = ceg;
-      _centresEcrit = centresEcrit;
-      _centresCorrection = centresCorrection;
-    });
+    try {
+      final remote = await Future.wait([
+        ListesLocales.charger('ecoleOrigineCepe'),
+        ListesLocales.charger('cegAccueil'),
+        ListesLocales.charger('centreEcritCepe'),
+        ListesLocales.charger('centreCorrectionCepe'),
+        ListesLocales.charger('groupeCepe'),
+        ListesLocales.charger('typeHandicap'),
+      ]);
+      if (!mounted) return;
+      setState(() {
+        _ecolesOrigine = remote[0];
+        _cegAccueils = remote[1];
+        _centresEcrit = remote[2];
+        _centresCorrection = remote[3];
+        final groupes = ListesLocales.sansDoublons(
+          remote[4],
+        ).map((e) => e.champs['code']!).toList()..sort();
+        if (groupes.isNotEmpty) {
+          _groupes = groupes;
+          if (!groupes.contains(_groupe)) _groupe = groupes.first;
+        }
+        final handicaps =
+            remote[5]
+                .map((e) => e.champs['libelle'])
+                .whereType<String>()
+                .toSet()
+                .toList()
+              ..sort();
+        if (handicaps.isNotEmpty) {
+          _typesHandicap = handicaps;
+          if (!handicaps.contains(_typeHandicap)) _typeHandicap = null;
+        }
+      });
+    } catch (e) {
+      if (mounted) {
+        setState(
+          () => _messageErreur =
+              'Impossible de charger les listes Firestore. Vérifiez la connexion et l’initialisation admin : $e',
+        );
+      }
+    }
   }
 
   Future<void> _prendrePhoto() async {
     final path = await prendrePhotoOuChoisirFichier();
-    if (path != null) {
-      setState(() => _photoPath = path);
+    if (path == null) return;
+    if (!mounted) {
+      await FirebaseStorageService.supprimerPhotoTemporaire(path);
+      return;
     }
+    final ancienne = _photoPath;
+    if (ancienne != null) {
+      await FirebaseStorageService.supprimerPhotoTemporaire(ancienne);
+    }
+    if (mounted) setState(() => _photoPath = path);
   }
 
   void _lireDateNaissance(String v) {
@@ -142,9 +182,41 @@ class _FormulaireCepeScreenState extends State<FormulaireCepeScreen> {
     setState(() => _enregistrement = true);
 
     final now = DateTime.now();
-    final candidats = await SqliteService.instance.listerCandidatsCepe(
-      anneeSession: now.year,
-    );
+    final codeCandidat = 'CEPE_${now.millisecondsSinceEpoch}';
+    final codeEtab = AppSession.instance.codeEtab ?? '';
+    late final String photoUrl;
+    try {
+      photoUrl = await FirebaseStorageService.envoyerPhoto(
+        cheminLocal: _photoPath!,
+        cheminCloudSansExtension: 'candidats/$codeEtab/cepe/$codeCandidat',
+      );
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _enregistrement = false;
+          _photoPath = null;
+        });
+        _erreur('Échec du traitement de la photo : $e');
+      }
+      return;
+    }
+    late final List<CandidatCepe> candidats;
+    try {
+      candidats = await FirestoreService.instance.listerCandidatsCepe(
+        codeEtab: AppSession.instance.codeEtab ?? '',
+      );
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _enregistrement = false;
+          _photoPath = null;
+        });
+        _erreur(
+          'Impossible de lire Firestore pour le numéro du candidat : $e. Reprenez la photo avant de réessayer.',
+        );
+      }
+      return;
+    }
 
     // "Née vers" : si -1, l'année de naissance saisie est décalée d'un an
     // en arrière dans la base (ex: saisi 2024 + "-1" => 2023 enregistré).
@@ -156,7 +228,7 @@ class _FormulaireCepeScreenState extends State<FormulaireCepeScreen> {
     );
 
     final candidat = CandidatCepe(
-      codeCandidat: 'CEPE_${now.millisecondsSinceEpoch}',
+      codeCandidat: codeCandidat,
       numero: candidats.length + 1,
       nom: _nomController.text.trim(),
       prenom: _prenomController.text.trim(),
@@ -179,12 +251,25 @@ class _FormulaireCepeScreenState extends State<FormulaireCepeScreen> {
       codeCentreEcrit: _codeCentreEcrit,
       codeCentreCorrection: _codeCentreCorrection,
       eps: false,
-      photo: _photoPath!,
+      photo: photoUrl,
       etatCandidat: 'Inscrit',
       anneeSession: now.year,
     );
 
-    await SqliteService.instance.insererCandidatCepe(candidat);
+    try {
+      await FirestoreService.instance.ajouterCandidatCepe(candidat);
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _enregistrement = false;
+          _photoPath = null;
+        });
+        _erreur(
+          'Échec de l’enregistrement Firestore : $e. Reprenez la photo avant de réessayer.',
+        );
+      }
+      return;
+    }
 
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
@@ -200,6 +285,12 @@ class _FormulaireCepeScreenState extends State<FormulaireCepeScreen> {
     // (écrit/correction) ni l'école d'origine, car on inscrit en général
     // plusieurs candidats du même centre à la suite. Seuls les champs
     // propres au candidat (identité, photo...) sont vidés.
+    // reset() relance les « onChanged » des menus et efface les centres :
+    // on mémorise donc les choix communs aux candidats suivants, puis on les remet.
+    final gardeCorrection = _codeCentreCorrection;
+    final gardeEcrit = _codeCentreEcrit;
+    final gardeEcole = _codeEcoleOrigine;
+    final gardeAccueil = _codeCegAccueil;
     _formKey.currentState!.reset();
     _nomController.clear();
     _prenomController.clear();
@@ -209,6 +300,10 @@ class _FormulaireCepeScreenState extends State<FormulaireCepeScreen> {
     _nomMereController.clear();
     _dateNaissanceController.clear();
     setState(() {
+      _codeCentreCorrection = gardeCorrection;
+      _codeCentreEcrit = gardeEcrit;
+      _codeEcoleOrigine = gardeEcole;
+      _codeCegAccueil = gardeAccueil;
       _dateNaissance = null;
       _sexe = 'G';
       _handicap = false;
@@ -231,6 +326,13 @@ class _FormulaireCepeScreenState extends State<FormulaireCepeScreen> {
       duration: const Duration(milliseconds: 300),
       curve: Curves.easeOut,
     );
+  }
+
+  @override
+  void dispose() {
+    final chemin = _photoPath;
+    if (chemin != null) FirebaseStorageService.supprimerPhotoTemporaire(chemin);
+    super.dispose();
   }
 
   @override
@@ -279,62 +381,77 @@ class _FormulaireCepeScreenState extends State<FormulaireCepeScreen> {
               titre: 'Centres',
               icone: Icons.apartment,
               enfants: [
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Expanded(
-                      child: DropdownButtonFormField<String>(
-                        initialValue: _codeCentreEcrit,
-                        decoration: const InputDecoration(
-                          labelText: 'Centre d’écrit *',
-                          border: OutlineInputBorder(),
+                DropdownButtonFormField<String>(
+                  key: ValueKey('corr_$_codeCentreCorrection'),
+                  initialValue: _codeCentreCorrection,
+                  decoration: const InputDecoration(
+                    labelText: 'Centre de correction *',
+                    border: OutlineInputBorder(),
+                  ),
+                  items: _centresCorrection
+                      .where((c) => c.champs['code'] != null)
+                      .map(
+                        (c) => DropdownMenuItem<String>(
+                          value: c.champs['code'],
+                          child: Text(
+                            c.champs['libelle'] ?? c.champs['code'] ?? '',
+                            overflow: TextOverflow.ellipsis,
+                          ),
                         ),
-                        items: _centresEcrit
-                            .map(
-                              (c) => DropdownMenuItem(
-                                value: c.champs['code'],
-                                child: Text(
-                                  c.champs['libelle'] ??
-                                      c.champs['nom'] ??
-                                      c.champs['code'] ??
-                                      '',
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                              ),
-                            )
-                            .toList(),
-                        validator: (v) => v == null ? 'Obligatoire' : null,
-                        onChanged: (v) => setState(() => _codeCentreEcrit = v),
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: DropdownButtonFormField<String>(
-                        initialValue: _codeCentreCorrection,
-                        decoration: const InputDecoration(
-                          labelText: 'Centre de correction *',
-                          border: OutlineInputBorder(),
+                      )
+                      .toList(),
+                  validator: (v) => v == null ? 'Obligatoire' : null,
+                  onChanged: (v) => setState(() {
+                    _codeCentreCorrection = v;
+                    _codeEcoleOrigine = null;
+                    final ecrits = _centresEcrit
+                        .where((c) => c.champs['codecorrection'] == v)
+                        .toList();
+                    _codeCentreEcrit = ecrits.length == 1
+                        ? ecrits.first.champs['code']
+                        : null;
+                    final accueils = _cegAccueils
+                        .where((c) => c.champs['codecorrection'] == v)
+                        .toList();
+                    _codeCegAccueil = accueils.length == 1
+                        ? accueils.first.champs['code']
+                        : null;
+                  }),
+                ),
+                const SizedBox(height: 12),
+                DropdownButtonFormField<String>(
+                  key: ValueKey(
+                    'ecrit_${_codeCentreCorrection}_$_codeCentreEcrit',
+                  ),
+                  initialValue: _codeCentreEcrit,
+                  decoration: const InputDecoration(
+                    labelText: 'Centre d’écrit *',
+                    border: OutlineInputBorder(),
+                  ),
+                  items: _centresEcrit
+                      .where(
+                        (c) =>
+                            c.champs['code'] != null &&
+                            (_codeCentreCorrection == null ||
+                                c.champs['codecorrection'] ==
+                                    _codeCentreCorrection),
+                      )
+                      .map(
+                        (c) => DropdownMenuItem<String>(
+                          value: c.champs['code'],
+                          child: Text(
+                            c.champs['libelle'] ?? c.champs['code'] ?? '',
+                            overflow: TextOverflow.ellipsis,
+                          ),
                         ),
-                        items: _centresCorrection
-                            .map(
-                              (c) => DropdownMenuItem(
-                                value: c.champs['code'],
-                                child: Text(
-                                  c.champs['libelle'] ??
-                                      c.champs['nom'] ??
-                                      c.champs['code'] ??
-                                      '',
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                              ),
-                            )
-                            .toList(),
-                        validator: (v) => v == null ? 'Obligatoire' : null,
-                        onChanged: (v) =>
-                            setState(() => _codeCentreCorrection = v),
-                      ),
-                    ),
-                  ],
+                      )
+                      .toList(),
+                  validator: (v) => v == null ? 'Obligatoire' : null,
+                  onChanged: (v) => setState(() {
+                    _codeCentreEcrit = v;
+                    _codeEcoleOrigine =
+                        null; // l'école dépend du centre d'écrit
+                  }),
                 ),
               ],
             ),
@@ -343,34 +460,23 @@ class _FormulaireCepeScreenState extends State<FormulaireCepeScreen> {
               titre: 'Identité du candidat',
               icone: Icons.badge,
               enfants: [
-                Row(
-                  children: [
-                    Expanded(
-                      child: TextFormField(
-                        controller: _nomController,
-                        decoration: const InputDecoration(
-                          labelText: 'Nom *',
-                          border: OutlineInputBorder(),
-                        ),
-                        validator: (v) => (v == null || v.trim().isEmpty)
-                            ? 'Obligatoire'
-                            : null,
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: TextFormField(
-                        controller: _prenomController,
-                        decoration: const InputDecoration(
-                          labelText: 'Prénom *',
-                          border: OutlineInputBorder(),
-                        ),
-                        validator: (v) => (v == null || v.trim().isEmpty)
-                            ? 'Obligatoire'
-                            : null,
-                      ),
-                    ),
-                  ],
+                TextFormField(
+                  controller: _nomController,
+                  decoration: const InputDecoration(
+                    labelText: 'Nom *',
+                    border: OutlineInputBorder(),
+                  ),
+                  validator: (v) =>
+                      (v == null || v.trim().isEmpty) ? 'Obligatoire' : null,
+                ),
+                TextFormField(
+                  controller: _prenomController,
+                  decoration: const InputDecoration(
+                    labelText: 'Prénom *',
+                    border: OutlineInputBorder(),
+                  ),
+                  validator: (v) =>
+                      (v == null || v.trim().isEmpty) ? 'Obligatoire' : null,
                 ),
                 Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -409,8 +515,9 @@ class _FormulaireCepeScreenState extends State<FormulaireCepeScreen> {
                           const SizedBox(height: 4),
                           SegmentedButton<int>(
                             segments: const [
-                              ButtonSegment(value: 0, label: Text('0')),
-                              ButtonSegment(value: -1, label: Text('-1')),
+                              // Non = 0 (année inchangée) ; Oui = -1 (année décalée d'un an)
+                              ButtonSegment(value: 0, label: Text('Non')),
+                              ButtonSegment(value: -1, label: Text('Oui')),
                             ],
                             selected: {_neeVert},
                             onSelectionChanged: (v) =>
@@ -508,7 +615,7 @@ class _FormulaireCepeScreenState extends State<FormulaireCepeScreen> {
                       labelText: 'Type de handicap *',
                       border: OutlineInputBorder(),
                     ),
-                    items: typesHandicap
+                    items: _typesHandicap
                         .map((t) => DropdownMenuItem(value: t, child: Text(t)))
                         .toList(),
                     onChanged: (v) => setState(() => _typeHandicap = v),
@@ -523,14 +630,14 @@ class _FormulaireCepeScreenState extends State<FormulaireCepeScreen> {
                 DropdownButtonFormField<String>(
                   value: _groupe,
                   decoration: const InputDecoration(
-                    labelText: 'Groupe *',
+                    labelText: 'Option *',
                     border: OutlineInputBorder(),
                   ),
-                  items: const ['A', 'B', 'C']
+                  items: _groupes
                       .map(
                         (g) => DropdownMenuItem(
                           value: g,
-                          child: Text('Groupe $g'),
+                          child: Text('Option $g'),
                         ),
                       )
                       .toList(),
@@ -540,25 +647,40 @@ class _FormulaireCepeScreenState extends State<FormulaireCepeScreen> {
                   }),
                 ),
                 DropdownButtonFormField<String>(
+                  key: ValueKey('ecole_$_codeCentreEcrit'),
                   value: _codeEcoleOrigine,
                   decoration: const InputDecoration(
                     labelText: 'École d\'origine *',
                     border: OutlineInputBorder(),
                   ),
-                  items: _ecolesOrigine
-                      .map(
-                        (e) => DropdownMenuItem(
-                          value: e.champs['code'],
-                          child: Text(
-                            e.champs['nom'] ?? e.champs['code'] ?? '',
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                      )
-                      .toList(),
+                  items:
+                      ListesLocales.sansDoublons(
+                            _ecolesOrigine
+                                .where(
+                                  (e) =>
+                                      e.champs['code'] != null &&
+                                      (_codeCentreEcrit == null ||
+                                          e.champs['codeCentre'] ==
+                                              _codeCentreEcrit),
+                                )
+                                .toList(),
+                          )
+                          .map(
+                            (e) => DropdownMenuItem<String>(
+                              value: e.champs['code'] as String,
+                              child: Text(
+                                e.champs['nom'] ?? e.champs['code'] ?? '',
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                          )
+                          .toList(),
                   onChanged: (v) => setState(() => _codeEcoleOrigine = v),
                 ),
                 DropdownButtonFormField<String>(
+                  key: ValueKey(
+                    'ceg_${_codeCentreCorrection}_$_codeCegAccueil',
+                  ),
                   value: _codeCegAccueil,
                   decoration: InputDecoration(
                     labelText: _cegAccueilActif
@@ -567,9 +689,16 @@ class _FormulaireCepeScreenState extends State<FormulaireCepeScreen> {
                     border: const OutlineInputBorder(),
                   ),
                   items: _cegAccueils
+                      .where(
+                        (c) =>
+                            c.champs['code'] != null &&
+                            (_codeCentreCorrection == null ||
+                                c.champs['codecorrection'] ==
+                                    _codeCentreCorrection),
+                      )
                       .map(
-                        (c) => DropdownMenuItem(
-                          value: c.champs['code'],
+                        (c) => DropdownMenuItem<String>(
+                          value: c.champs['code'] as String,
                           child: Text(
                             c.champs['libelle'] ?? c.champs['code'] ?? '',
                             overflow: TextOverflow.ellipsis,

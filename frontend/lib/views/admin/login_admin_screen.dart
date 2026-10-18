@@ -1,14 +1,13 @@
 import 'package:flutter/material.dart';
 
-import '../../models/item_liste.dart';
-import '../../services/sqlite_service.dart';
 import '../../services/admin_session.dart';
+import '../../services/firebase_auth_service.dart';
+import '../../widgets/signature_auteur.dart';
 import 'admin_dashboard_screen.dart';
 
-/// Connexion de l'Administration CISCO. Deux champs : nom de l'agent et
-/// code admin. S'il n'existe encore aucun compte admin en base, la
-/// première connexion crée automatiquement ce compte (bootstrap) — sinon
-/// le code doit correspondre exactement à un compte déjà enregistré.
+/// Connexion de l'Administration CISCO. Il y a exactement DEUX admins,
+/// identifiés par leur nom (ATI ou EDGS, en majuscules) — chacun a son
+/// propre mot de passe qu'il peut changer lui-même.
 class LoginAdminScreen extends StatefulWidget {
   const LoginAdminScreen({super.key});
 
@@ -23,12 +22,21 @@ class _LoginAdminScreenState extends State<LoginAdminScreen> {
   bool _chargement = false;
 
   Future<void> _seConnecter() async {
+    // Le nom doit correspondre EXACTEMENT (majuscules incluses) à un des
+    // deux admins reconnus — demande explicite de l'encadreur.
     final nom = _nomController.text.trim();
     final code = _codeController.text.trim();
 
     if (nom.isEmpty || code.isEmpty) {
       setState(
-        () => _erreur = 'Renseignez le nom de l\'agent et le code admin',
+        () => _erreur = 'Renseignez le nom de l\'agent et le mot de passe',
+      );
+      return;
+    }
+
+    if (!FirebaseAuthService.nomsAdminsValides.contains(nom)) {
+      setState(
+        () => _erreur = 'Nom inconnu. Entrez ATI ou EDGS, en majuscules.',
       );
       return;
     }
@@ -38,32 +46,17 @@ class _LoginAdminScreenState extends State<LoginAdminScreen> {
       _erreur = null;
     });
 
-    final admins = await SqliteService.instance.listerItems('admin');
-
-    if (admins.isEmpty) {
-      // Bootstrap : premier compte admin créé automatiquement
-      await SqliteService.instance.insererItemListe(
-        ItemListe(
-          id: 'admin_$code',
-          typeListe: 'admin',
-          champs: {'code': code, 'nom': nom},
-        ),
-      );
-      AdminSession.instance.connecter(codeAdmin: code, nomAgent: nom);
-    } else {
-      final trouve = admins.where((a) => a.champs['code'] == code).toList();
-      if (trouve.isEmpty) {
-        setState(() {
-          _chargement = false;
-          _erreur = 'Code admin incorrect';
-        });
-        return;
-      }
-      AdminSession.instance.connecter(
-        codeAdmin: code,
-        nomAgent: trouve.first.champs['nom'] ?? nom,
-      );
+    try {
+      await FirebaseAuthService.connecterAdmin(nomAdmin: nom, motDePasse: code);
+    } catch (e) {
+      setState(() {
+        _chargement = false;
+        _erreur = 'Mot de passe incorrect ou connexion internet impossible';
+      });
+      return;
     }
+
+    AdminSession.instance.connecter(codeAdmin: nom, nomAgent: nom);
 
     setState(() => _chargement = false);
     if (!mounted) return;
@@ -76,6 +69,9 @@ class _LoginAdminScreenState extends State<LoginAdminScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: const Color(0xFF0D1B2A),
+      bottomNavigationBar: const SafeArea(
+        child: SignatureAuteur(couleur: Colors.white38),
+      ),
       body: Center(
         child: Padding(
           padding: const EdgeInsets.all(24),
@@ -105,7 +101,7 @@ class _LoginAdminScreenState extends State<LoginAdminScreen> {
                     ),
                     const SizedBox(height: 20),
                     const Text(
-                      'Administration CISCO',
+                      'Administration CISCO Vohibato',
                       style: TextStyle(
                         fontSize: 22,
                         fontWeight: FontWeight.bold,
@@ -119,8 +115,9 @@ class _LoginAdminScreenState extends State<LoginAdminScreen> {
                     const SizedBox(height: 24),
                     TextField(
                       controller: _nomController,
+                      textCapitalization: TextCapitalization.characters,
                       decoration: const InputDecoration(
-                        labelText: 'Nom de l\'agent',
+                        labelText: 'Nom de l\'agent (ATI ou EDGS)',
                         prefixIcon: Icon(Icons.person),
                         border: OutlineInputBorder(),
                       ),
@@ -129,7 +126,7 @@ class _LoginAdminScreenState extends State<LoginAdminScreen> {
                     TextField(
                       controller: _codeController,
                       decoration: InputDecoration(
-                        labelText: 'Code admin',
+                        labelText: 'Mot de passe',
                         prefixIcon: const Icon(Icons.key),
                         border: const OutlineInputBorder(),
                         errorText: _erreur,

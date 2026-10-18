@@ -1,13 +1,15 @@
-import 'dart:io';
 import 'package:flutter/material.dart';
 
 import '../../models/enseignant.dart';
 import '../../models/membre_previsionnel.dart';
 import '../../models/item_liste.dart';
 import '../../models/quota_membre.dart';
-import '../../services/sqlite_service.dart';
+import '../../services/firestore_service.dart';
+import '../../services/firestore_listes_service.dart';
+import '../../services/listes_locales.dart';
 import '../../services/app_session.dart';
 import '../../utils/csv_export.dart';
+import '../../utils/photo_helper.dart';
 
 /// Liste des membres prévisionnels de l'établissement, avec filtre par
 /// rôle. Cliquer sur un membre ouvre un détail affichant ses informations
@@ -24,6 +26,7 @@ class _ListeMembresScreenState extends State<ListeMembresScreen> {
   List<MembrePrevisionnel> _membres = [];
   List<Enseignant> _enseignants = [];
   String? _filtreRole; // null = tous les rôles
+  bool _chargement = true;
   Map<String, String> _nomsCentres = {};
 
   int get _anneeSession => DateTime.now().year;
@@ -36,39 +39,46 @@ class _ListeMembresScreenState extends State<ListeMembresScreen> {
   }
 
   Future<void> _rafraichir() async {
-    final enseignants = await SqliteService.instance.listerEnseignants(
-      _codeEtab,
-    );
-    final matriculesEtab = enseignants.map((e) => e.matricule).toSet();
-    final tousMembres = await SqliteService.instance.listerMembres(
-      anneeSession: _anneeSession,
-      typeExamen: widget.typeExamen,
-    );
-    final centres = <ItemListe>[
-      ...await SqliteService.instance.listerItems(
-        widget.typeExamen == 'CEPE' ? 'centreEcritCepe' : 'centreEcritBepc',
-      ),
-      ...await SqliteService.instance.listerItems(
-        widget.typeExamen == 'CEPE'
-            ? 'centreCorrectionCepe'
-            : 'centreCorrectionBepc',
-      ),
-    ];
-    final nomsCentres = <String, String>{
-      for (final c in centres)
-        if (c.champs['code'] != null)
-          c.champs['code']!:
-              (c.champs['libelle'] ?? c.champs['nom'] ?? c.champs['code']!),
-    };
-    final membresEtab = tousMembres
-        .where((m) => matriculesEtab.contains(m.matriculeEnseignant))
-        .toList();
-
-    setState(() {
-      _enseignants = enseignants;
-      _membres = membresEtab;
-      _nomsCentres = nomsCentres;
-    });
+    if (mounted) setState(() => _chargement = true);
+    try {
+      final enseignants = await FirestoreService.instance.listerEnseignants(
+        _codeEtab,
+      );
+      final membresEtab = await FirestoreService.instance.listerMembres(
+        codeEtab: _codeEtab,
+        anneeSession: _anneeSession,
+        typeExamen: widget.typeExamen,
+      );
+      final centres = <ItemListe>[
+        ...await ListesLocales.charger(
+          widget.typeExamen == 'CEPE' ? 'centreEcritCepe' : 'centreEcritBepc',
+        ),
+        ...await ListesLocales.charger(
+          widget.typeExamen == 'CEPE'
+              ? 'centreCorrectionCepe'
+              : 'centreCorrectionBepc',
+        ),
+      ];
+      final nomsCentres = <String, String>{
+        for (final c in centres)
+          if (c.champs['code'] != null)
+            c.champs['code']!:
+                c.champs['libelle'] ?? c.champs['nom'] ?? c.champs['code']!,
+      };
+      if (!mounted) return;
+      setState(() {
+        _enseignants = enseignants;
+        _membres = membresEtab;
+        _nomsCentres = nomsCentres;
+        _chargement = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _chargement = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Erreur de chargement Firestore : $e')),
+      );
+    }
   }
 
   Enseignant? _enseignantDe(String matricule) {
@@ -107,7 +117,7 @@ class _ListeMembresScreenState extends State<ListeMembresScreen> {
             e?.prenom ?? '-',
             e?.fonction ?? '-',
             libelleRole(m.role),
-            m.etat,
+            m.etatAffiche,
             _nomCentre(m.codeCentreEcrit),
             _nomCentre(m.codeCentreCorrection),
           ];
@@ -119,9 +129,13 @@ class _ListeMembresScreenState extends State<ListeMembresScreen> {
       ).showSnackBar(SnackBar(content: Text('Exporté : $chemin')));
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Erreur export : $e')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            e is EnregistrementAnnule ? '$e' : 'Erreur export : $e',
+          ),
+        ),
+      );
     }
   }
 
@@ -161,7 +175,7 @@ class _ListeMembresScreenState extends State<ListeMembresScreen> {
             const SizedBox(height: 8),
             _ligneInfo('Fonction', enseignant?.fonction ?? '-'),
             _ligneInfo('Rôle', libelleRole(membre.role)),
-            _ligneInfo('État', membre.etat),
+            _ligneInfo('État', membre.etatAffiche),
             _ligneInfo('Téléphone', enseignant?.phone ?? '-'),
             _ligneInfo('Centre d\'écrit', _nomCentre(membre.codeCentreEcrit)),
             _ligneInfo(
@@ -207,9 +221,9 @@ class _ListeMembresScreenState extends State<ListeMembresScreen> {
     );
   }
 
-  Widget _imageCin(String label, String? chemin) {
-    final fichier = chemin != null ? File(chemin) : null;
-    final existe = fichier != null && fichier.existsSync();
+  Widget _imageCin(String label, String? url) {
+    final image = imageDepuisPhoto(url);
+    final estUrl = image != null;
     return Column(
       children: [
         Text(label, style: const TextStyle(color: Colors.grey)),
@@ -220,17 +234,20 @@ class _ListeMembresScreenState extends State<ListeMembresScreen> {
             border: Border.all(color: Colors.grey.shade300),
             borderRadius: BorderRadius.circular(8),
           ),
-          child: existe
-              ? ClipRRect(
+          child: !estUrl
+              ? const Center(
+                  child: Icon(Icons.image_not_supported, color: Colors.grey),
+                )
+              : ClipRRect(
                   borderRadius: BorderRadius.circular(8),
-                  child: Image.file(
-                    fichier,
+                  child: Image(
+                    image: image,
                     fit: BoxFit.cover,
                     width: double.infinity,
+                    errorBuilder: (_, __, ___) => const Center(
+                      child: Icon(Icons.broken_image, color: Colors.grey),
+                    ),
                   ),
-                )
-              : const Center(
-                  child: Icon(Icons.image_not_supported, color: Colors.grey),
                 ),
         ),
       ],
@@ -250,60 +267,66 @@ class _ListeMembresScreenState extends State<ListeMembresScreen> {
           ),
         ],
       ),
-      body: Column(
-        children: [
-          Padding(
-            padding: const EdgeInsets.all(12),
-            child: DropdownButtonFormField<String?>(
-              initialValue: _filtreRole,
-              decoration: const InputDecoration(
-                labelText: 'Filtrer par rôle',
-                border: OutlineInputBorder(),
-                isDense: true,
-              ),
-              items: [
-                const DropdownMenuItem(
-                  value: null,
-                  child: Text('Tous les rôles'),
+      body: _chargement
+          ? const Center(child: CircularProgressIndicator())
+          : Column(
+              children: [
+                Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: DropdownButtonFormField<String?>(
+                    initialValue: _filtreRole,
+                    decoration: const InputDecoration(
+                      labelText: 'Filtrer par rôle',
+                      border: OutlineInputBorder(),
+                      isDense: true,
+                    ),
+                    items: [
+                      const DropdownMenuItem(
+                        value: null,
+                        child: Text('Tous les rôles'),
+                      ),
+                      ...rolesMembre.map(
+                        (r) => DropdownMenuItem(
+                          value: r,
+                          child: Text(libelleRole(r)),
+                        ),
+                      ),
+                    ],
+                    onChanged: (v) => setState(() => _filtreRole = v),
+                  ),
                 ),
-                ...rolesMembre.map(
-                  (r) =>
-                      DropdownMenuItem(value: r, child: Text(libelleRole(r))),
+                Expanded(
+                  child: _membresFiltres.isEmpty
+                      ? const Center(child: Text('Aucun membre pour ce filtre'))
+                      : ListView.builder(
+                          itemCount: _membresFiltres.length,
+                          itemBuilder: (ctx, i) {
+                            final m = _membresFiltres[i];
+                            final e = _enseignantDe(m.matriculeEnseignant);
+                            return ListTile(
+                              leading: CircleAvatar(
+                                backgroundColor: Colors.purple,
+                                child: Text(
+                                  e?.nom.isNotEmpty == true ? e!.nom[0] : '?',
+                                  style: const TextStyle(color: Colors.white),
+                                ),
+                              ),
+                              title: Text(
+                                e != null
+                                    ? '${e.nom} ${e.prenom}'
+                                    : m.matriculeEnseignant,
+                              ),
+                              subtitle: Text(
+                                '${libelleRole(m.role)} — ${m.etatAffiche}',
+                              ),
+                              trailing: const Icon(Icons.chevron_right),
+                              onTap: () => _voirDetail(m),
+                            );
+                          },
+                        ),
                 ),
               ],
-              onChanged: (v) => setState(() => _filtreRole = v),
             ),
-          ),
-          Expanded(
-            child: _membresFiltres.isEmpty
-                ? const Center(child: Text('Aucun membre pour ce filtre'))
-                : ListView.builder(
-                    itemCount: _membresFiltres.length,
-                    itemBuilder: (ctx, i) {
-                      final m = _membresFiltres[i];
-                      final e = _enseignantDe(m.matriculeEnseignant);
-                      return ListTile(
-                        leading: CircleAvatar(
-                          backgroundColor: Colors.purple,
-                          child: Text(
-                            e?.nom.isNotEmpty == true ? e!.nom[0] : '?',
-                            style: const TextStyle(color: Colors.white),
-                          ),
-                        ),
-                        title: Text(
-                          e != null
-                              ? '${e.nom} ${e.prenom}'
-                              : m.matriculeEnseignant,
-                        ),
-                        subtitle: Text('${libelleRole(m.role)} — ${m.etat}'),
-                        trailing: const Icon(Icons.chevron_right),
-                        onTap: () => _voirDetail(m),
-                      );
-                    },
-                  ),
-          ),
-        ],
-      ),
     );
   }
 }

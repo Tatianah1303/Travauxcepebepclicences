@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../models/enseignant.dart';
-import '../../services/sqlite_service.dart';
+import '../../services/firestore_service.dart';
 import '../../services/app_session.dart';
 import '../../utils/validators.dart';
 import '../../widgets/section_card.dart';
@@ -26,7 +26,7 @@ class _EnseignantListeScreenState extends State<EnseignantListeScreen> {
 
   Future<void> _rafraichir() async {
     final codeEtab = AppSession.instance.codeEtab ?? '';
-    final liste = await SqliteService.instance.listerEnseignants(codeEtab);
+    final liste = await FirestoreService.instance.listerEnseignants(codeEtab);
     setState(() => _enseignants = liste);
   }
 
@@ -59,7 +59,10 @@ class _EnseignantListeScreenState extends State<EnseignantListeScreen> {
       ),
     );
     if (confirme != true) return;
-    await SqliteService.instance.supprimerEnseignant(e.matricule);
+    await FirestoreService.instance.supprimerEnseignant(
+      e.codeEtab,
+      e.matricule,
+    );
     await _rafraichir();
   }
 
@@ -103,7 +106,7 @@ class _EnseignantListeScreenState extends State<EnseignantListeScreen> {
                         .map(
                           (e) => DataRow(
                             cells: [
-                              DataCell(Text(e.matricule)),
+                              DataCell(Text(e.matriculeAffiche)),
                               DataCell(Text(e.nom)),
                               DataCell(Text(e.prenom)),
                               DataCell(Text(e.sexe ?? '-')),
@@ -183,7 +186,9 @@ class _FormulaireEnseignantScreenState
     extends State<_FormulaireEnseignantScreen> {
   final _formKey = GlobalKey<FormState>();
   late final _matriculeController = TextEditingController(
-    text: widget.existant?.matricule ?? '',
+    text: widget.existant?.matriculeAffiche == '-'
+        ? ''
+        : (widget.existant?.matricule ?? ''),
   );
   late final _cinController = TextEditingController(
     text: widget.existant?.cin ?? '',
@@ -208,22 +213,60 @@ class _FormulaireEnseignantScreenState
     if (!_formKey.currentState!.validate()) return;
     setState(() => _enregistrement = true);
 
+    final codeEtab = AppSession.instance.codeEtab ?? '';
+    final saisi = _matriculeController.text.trim();
+    final ancien = widget.existant?.matricule;
+
+    // Sans matricule saisi : on garde l'identifiant existant, ou on en
+    // génère un (jamais affiché).
+    final matricule = saisi.isNotEmpty
+        ? saisi
+        : (ancien ?? 'sans_${DateTime.now().millisecondsSinceEpoch}');
+
     final enseignant = Enseignant(
-      matricule: _matriculeController.text.trim(),
+      matricule: matricule,
       nom: _nomController.text.trim(),
       prenom: _prenomController.text.trim(),
       phone: _phoneController.text.trim(),
       adresse: _adresseController.text.trim(),
-      codeEtab: AppSession.instance.codeEtab ?? '',
+      codeEtab: codeEtab,
       fonction: _fonction,
       cin: _cinController.text.trim(),
       sexe: _sexe,
     );
 
-    if (widget.existant == null) {
-      await SqliteService.instance.insererEnseignant(enseignant);
-    } else {
-      await SqliteService.instance.modifierEnseignant(enseignant);
+    try {
+      if (ancien != null && ancien != matricule) {
+        // Changement de matricule : interdit si l'enseignant est déjà membre.
+        if (await FirestoreService.instance.enseignantEstMembre(
+          codeEtab,
+          ancien,
+        )) {
+          if (!mounted) return;
+          setState(() => _enregistrement = false);
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text(
+                'Cet enseignant est déjà désigné membre : son matricule ne peut plus être modifié.',
+              ),
+            ),
+          );
+          return;
+        }
+        await FirestoreService.instance.ajouterEnseignant(enseignant);
+        await FirestoreService.instance.supprimerEnseignant(codeEtab, ancien);
+      } else if (widget.existant == null) {
+        await FirestoreService.instance.ajouterEnseignant(enseignant);
+      } else {
+        await FirestoreService.instance.modifierEnseignant(enseignant);
+      }
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _enregistrement = false);
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Erreur : $e')));
+      return;
     }
 
     if (!mounted) return;
@@ -256,15 +299,18 @@ class _FormulaireEnseignantScreenState
                 TextFormField(
                   controller: _matriculeController,
                   decoration: const InputDecoration(
-                    labelText: 'Matricule (6 chiffres) *',
+                    labelText: 'Matricule (6 chiffres) — facultatif',
                     border: OutlineInputBorder(),
                   ),
                   keyboardType: TextInputType.number,
                   maxLength: 6,
-                  validator: (v) =>
-                      (v == null || !RegExp(r'^\d{6}$').hasMatch(v.trim()))
-                      ? 'Le matricule doit contenir exactement 6 chiffres'
-                      : null,
+                  validator: (v) {
+                    final t = v?.trim() ?? '';
+                    if (t.isEmpty) return null; // le matricule peut être vide
+                    return RegExp(r'^\d{6}$').hasMatch(t)
+                        ? null
+                        : 'Le matricule doit contenir exactement 6 chiffres';
+                  },
                 ),
                 TextFormField(
                   controller: _cinController,
@@ -286,34 +332,23 @@ class _FormulaireEnseignantScreenState
               titre: 'Identité',
               icone: Icons.person,
               enfants: [
-                Row(
-                  children: [
-                    Expanded(
-                      child: TextFormField(
-                        controller: _nomController,
-                        decoration: const InputDecoration(
-                          labelText: 'Nom *',
-                          border: OutlineInputBorder(),
-                        ),
-                        validator: (v) => (v == null || v.trim().isEmpty)
-                            ? 'Obligatoire'
-                            : null,
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: TextFormField(
-                        controller: _prenomController,
-                        decoration: const InputDecoration(
-                          labelText: 'Prénom *',
-                          border: OutlineInputBorder(),
-                        ),
-                        validator: (v) => (v == null || v.trim().isEmpty)
-                            ? 'Obligatoire'
-                            : null,
-                      ),
-                    ),
-                  ],
+                TextFormField(
+                  controller: _nomController,
+                  decoration: const InputDecoration(
+                    labelText: 'Nom *',
+                    border: OutlineInputBorder(),
+                  ),
+                  validator: (v) =>
+                      (v == null || v.trim().isEmpty) ? 'Obligatoire' : null,
+                ),
+                TextFormField(
+                  controller: _prenomController,
+                  decoration: const InputDecoration(
+                    labelText: 'Prénom *',
+                    border: OutlineInputBorder(),
+                  ),
+                  validator: (v) =>
+                      (v == null || v.trim().isEmpty) ? 'Obligatoire' : null,
                 ),
                 Row(
                   children: [
@@ -357,7 +392,7 @@ class _FormulaireEnseignantScreenState
                 TextFormField(
                   controller: _adresseController,
                   decoration: const InputDecoration(
-                    labelText: 'Adresse *',
+                    labelText: 'Localité de travail *',
                     border: OutlineInputBorder(),
                   ),
                   validator: (v) =>

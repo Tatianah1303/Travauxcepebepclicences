@@ -3,7 +3,9 @@ import 'package:flutter/material.dart';
 import '../../models/salle.dart';
 import '../../models/item_liste.dart';
 import '../../models/attribution_salle.dart';
-import '../../services/sqlite_service.dart';
+import '../../services/firestore_service.dart';
+import '../../services/firestore_listes_service.dart';
+import '../../services/listes_locales.dart';
 import '../../services/app_session.dart';
 import '../../widgets/searchable_dropdown.dart';
 
@@ -52,7 +54,7 @@ class _FormulaireSalleScreenState extends State<FormulaireSalleScreen> {
   }
 
   Future<void> _chargerCentres() async {
-    final centres = await SqliteService.instance.listerItems(_typeListeCentre);
+    final centres = await ListesLocales.charger(_typeListeCentre);
     setState(() => _centres = centres);
   }
 
@@ -66,15 +68,14 @@ class _FormulaireSalleScreenState extends State<FormulaireSalleScreen> {
   }
 
   Future<void> _rafraichir() async {
-    final salles = await SqliteService.instance.listerSalles(
+    final salles = await FirestoreService.instance.listerSalles(
       typeExamen: widget.typeExamen,
     );
     _totalAttribueParSalle.clear();
     _monAttributionParSalle.clear();
     for (final s in salles) {
-      final attributions = await SqliteService.instance.listerAttributionsSalle(
-        s.id,
-      );
+      final attributions = await FirestoreService.instance
+          .listerAttributionsSalle(s.id);
       _totalAttribueParSalle[s.id] = attributions.fold(
         0,
         (a, b) => a + b.nombreCandidats,
@@ -127,7 +128,7 @@ class _FormulaireSalleScreenState extends State<FormulaireSalleScreen> {
       anneeSession: DateTime.now().year,
     );
 
-    await SqliteService.instance.insererSalle(salle);
+    await FirestoreService.instance.ajouterSalle(salle);
     _numeroSalleController.clear();
     _capaciteController.clear();
     setState(() => _codeCentre = null);
@@ -199,7 +200,7 @@ class _FormulaireSalleScreenState extends State<FormulaireSalleScreen> {
     );
 
     if (valeur == null) return;
-    await SqliteService.instance.definirAttributionSalle(
+    await FirestoreService.instance.definirAttributionSalle(
       AttributionSalle(
         id: '${salle.id}_$_codeEtab',
         codeSalle: salle.id,
@@ -238,7 +239,7 @@ class _FormulaireSalleScreenState extends State<FormulaireSalleScreen> {
       ),
     );
     if (confirme != true) return;
-    await SqliteService.instance.supprimerSalle(salle.id);
+    await FirestoreService.instance.supprimerSalle(salle.id);
     await _rafraichir();
   }
 

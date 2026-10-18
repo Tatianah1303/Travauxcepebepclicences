@@ -1,55 +1,68 @@
-import 'dart:io';
+import 'dart:convert';
+import 'dart:typed_data';
+
 import 'package:archive/archive.dart';
-import 'package:path_provider/path_provider.dart';
 
-import 'sqlite_service.dart';
-import '../utils/csv_export.dart';
 import '../models/quota_membre.dart';
+import 'firestore_listes_service.dart';
+import 'listes_locales.dart';
+import '../utils/enregistrer_fichier.dart';
+import 'firestore_service.dart';
 
-/// Archivage et clôture de session (déclenché uniquement par
-/// l'Administration CISCO — voir diagramme de séquence "Archivage").
-///
-/// Étapes : 1) exporte candidats CEPE, candidats BEPC et membres
-/// prévisionnels de l'année en .csv, 2) compresse le tout en un seul
-/// .zip, 3) supprime les données de cette année de la base (les tables
-/// redeviennent prêtes pour la session suivante).
-///
-/// ⚠️ Action irréversible localement — le .zip est la seule copie
-/// restante des données de cette session après exécution.
+/// Archive la session en ZIP à l'emplacement choisi par l'admin (Firebase Storage n'est plus
+/// utilisé) puis supprime les données actives de Firestore uniquement après
+/// l'écriture réussie et la vérification du fichier. Retourne le chemin du ZIP.
 class ArchiveService {
-  static Future<String> archiverEtCloturerSession(int anneeSession) async {
-    final cepe = await SqliteService.instance.listerCandidatsCepe(
-      anneeSession: anneeSession,
-    );
-    final bepc = await SqliteService.instance.listerCandidatsBepc(
-      anneeSession: anneeSession,
-    );
-    final membres = await SqliteService.instance.listerMembres(
-      anneeSession: anneeSession,
-    );
-    final enseignants = await SqliteService.instance.listerTousEnseignants();
-    final etablissements = await SqliteService.instance.listerItems(
-      'etablissement',
-    );
+  static String _csv(List<String> entetes, List<List<String>> lignes) {
+    const separateur = ';';
+    String echapper(String valeur) {
+      const guillemet = '"';
+      if (valeur.contains(separateur) ||
+          valeur.contains(guillemet) ||
+          valeur.contains('\n')) {
+        return '"${valeur.replaceAll(guillemet, guillemet + guillemet)}"';
+      }
+      return valeur;
+    }
 
+    final b = StringBuffer();
+    b.writeln(entetes.map(echapper).join(separateur));
+    for (final ligne in lignes) {
+      b.writeln(ligne.map(echapper).join(separateur));
+    }
+    return '\uFEFF${b.toString()}';
+  }
+
+  static Future<String> archiverEtCloturerSession(int anneeSession) async {
+    final cepe = await FirestoreService.instance.listerTousCandidatsCepe(
+      anneeSession: anneeSession,
+    );
+    final bepc = await FirestoreService.instance.listerTousCandidatsBepc(
+      anneeSession: anneeSession,
+    );
+    final membres = await FirestoreService.instance.listerTousMembres(
+      anneeSession: anneeSession,
+    );
+    final enseignants = await FirestoreService.instance.listerTousEnseignants();
+    final etablissements = await ListesLocales.charger('etablissement');
     final nomsEtab = {
       for (final e in etablissements)
-        (e.champs['code'] ?? ''): (e.champs['nom'] ?? ''),
+        if (e.champs['code'] != null)
+          e.champs['code']!: e.champs['nom'] ?? e.champs['code']!,
     };
     final parMatricule = {for (final e in enseignants) e.matricule: e};
 
-    final cheminCepe = await exporterEnCsv(
-      nomFichier: 'archive_${anneeSession}_candidats_cepe',
-      entetes: const [
+    final cepeCsv = _csv(
+      const [
         'Établissement',
         'Nom',
         'Prénom',
         'Sexe',
-        'Groupe',
+        'Option',
         'Langue',
         'État',
       ],
-      lignes: cepe
+      cepe
           .map(
             (c) => [
               nomsEtab[c.codeEtab] ?? c.codeEtab,
@@ -63,10 +76,8 @@ class ArchiveService {
           )
           .toList(),
     );
-
-    final cheminBepc = await exporterEnCsv(
-      nomFichier: 'archive_${anneeSession}_candidats_bepc',
-      entetes: const [
+    final bepcCsv = _csv(
+      const [
         'Établissement',
         'Nom',
         'Prénom',
@@ -76,7 +87,7 @@ class ArchiveService {
         'Née vers',
         'État',
       ],
-      lignes: bepc
+      bepc
           .map(
             (c) => [
               nomsEtab[c.codeEtab] ?? c.codeEtab,
@@ -85,24 +96,15 @@ class ArchiveService {
               c.sexe,
               c.groupe,
               c.langue ?? '-',
-              '${c.neeVert}',
+              c.neeVert != 0 ? 'Oui' : 'Non',
               c.etatCandidat,
             ],
           )
           .toList(),
     );
-
-    final cheminMembres = await exporterEnCsv(
-      nomFichier: 'archive_${anneeSession}_membres',
-      entetes: const [
-        'Établissement',
-        'Nom',
-        'Prénom',
-        'Fonction',
-        'Rôle',
-        'État',
-      ],
-      lignes: membres.map((m) {
+    final membresCsv = _csv(
+      const ['Établissement', 'Nom', 'Prénom', 'Fonction', 'Rôle', 'État'],
+      membres.map((m) {
         final e = parMatricule[m.matriculeEnseignant];
         return [
           e != null ? (nomsEtab[e.codeEtab] ?? e.codeEtab) : '-',
@@ -110,34 +112,39 @@ class ArchiveService {
           e?.prenom ?? '-',
           e?.fonction ?? '-',
           libelleRole(m.role),
-          m.etat,
+          m.etatAffiche,
         ];
       }).toList(),
     );
 
-    // Compression en .zip
     final archive = Archive();
-    for (final chemin in [cheminCepe, cheminBepc, cheminMembres]) {
-      final fichier = File(chemin);
-      final octets = await fichier.readAsBytes();
-      final nom = chemin.split(Platform.pathSeparator).last;
-      archive.addFile(ArchiveFile(nom, octets.length, octets));
+    for (final (nom, csv) in [
+      ('archive_${anneeSession}_candidats_cepe.csv', cepeCsv),
+      ('archive_${anneeSession}_candidats_bepc.csv', bepcCsv),
+      ('archive_${anneeSession}_membres.csv', membresCsv),
+    ]) {
+      final bytes = Uint8List.fromList(utf8.encode(csv));
+      archive.addFile(ArchiveFile(nom, bytes.length, bytes));
+    }
+    final zip = ZipEncoder().encode(archive);
+    if (zip == null) throw StateError('Impossible de créer l’archive ZIP.');
+
+    // L'admin choisit lui-même où enregistrer le ZIP. Si la fenêtre est
+    // fermée sans choisir, on s'arrête AVANT toute suppression de données.
+    final String url;
+    try {
+      url = await enregistrerFichier(
+        nomFichier: 'session_$anneeSession.zip',
+        octets: Uint8List.fromList(zip),
+      );
+    } on EnregistrementAnnule {
+      throw const EnregistrementAnnule(
+        'Enregistrement annulé : aucune donnée n’a été supprimée.',
+      );
     }
 
-    final octetsZip = ZipEncoder().encode(archive);
-    final dossier = await getApplicationDocumentsDirectory();
-    final cheminZip = '${dossier.path}/session_${anneeSession}_archive.zip';
-    await File(cheminZip).writeAsBytes(octetsZip!);
-
-    // Nettoyage des .csv temporaires (déjà dans le zip)
-    for (final chemin in [cheminCepe, cheminBepc, cheminMembres]) {
-      final f = File(chemin);
-      if (await f.exists()) await f.delete();
-    }
-
-    // Réinitialisation : les 3 tables redeviennent vides pour l'année suivante
-    await SqliteService.instance.supprimerSession(anneeSession);
-
-    return cheminZip;
+    // La suppression ne démarre qu'après la création et la vérification du fichier local.
+    await FirestoreService.instance.supprimerSessionFirestore(anneeSession);
+    return url;
   }
 }

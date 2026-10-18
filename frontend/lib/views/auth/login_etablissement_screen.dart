@@ -1,7 +1,11 @@
 import 'package:flutter/material.dart';
 
-import '../../services/sqlite_service.dart';
+import '../../widgets/signature_auteur.dart';
+
+import '../../services/firestore_listes_service.dart';
+import '../../services/listes_locales.dart';
 import '../../services/app_session.dart';
+import '../../services/firebase_auth_service.dart';
 import '../dashboard/home_dashboard_screen.dart';
 import '../admin/login_admin_screen.dart';
 
@@ -9,9 +13,8 @@ import '../admin/login_admin_screen.dart';
 /// code, ex: 326020302). Pas de mot de passe séparé, pas de rôle — c'est
 /// l'établissement qui se connecte, un seul compte pour tous.
 ///
-/// La vérification se fait contre la liste 'etablissement' déjà chargée
-/// en base (via SeedService au premier lancement, ou ajoutée/modifiée
-/// depuis l'écran de gestion des établissements).
+/// L'établissement s'authentifie d'abord avec son compte Firebase, puis le
+/// code est vérifié dans le référentiel Firestore administré.
 class LoginEtablissementScreen extends StatefulWidget {
   const LoginEtablissementScreen({super.key});
 
@@ -37,28 +40,37 @@ class _LoginEtablissementScreenState extends State<LoginEtablissementScreen> {
       _erreur = null;
     });
 
-    final etablissements = await SqliteService.instance.listerItems(
-      'etablissement',
-    );
-    final trouve = etablissements
-        .where((e) => e.champs['code'] == code)
-        .toList();
-
-    setState(() => _chargement = false);
-
-    if (trouve.isEmpty) {
-      setState(
-        () => _erreur = 'Code établissement inconnu. Vérifiez le numéro saisi.',
+    try {
+      await FirebaseAuthService.connecterEtablissement(code);
+      final etablissements = await ListesLocales.charger('etablissement');
+      final correspondants = etablissements
+          .where((e) => e.champs['code'] == code)
+          .toList();
+      if (correspondants.isEmpty) {
+        await FirebaseAuthService.deconnecter();
+        if (mounted) {
+          setState(
+            () => _erreur =
+                'Ce code n’est pas présent dans le référentiel Firestore. Contactez l’administration.',
+          );
+        }
+        return;
+      }
+      final etablissement = correspondants.first;
+      if (!mounted) return;
+      AppSession.instance.connecter(
+        codeEtab: code,
+        nomEtab: etablissement.champs['nom'] ?? code,
       );
+    } catch (e) {
+      await FirebaseAuthService.deconnecter();
+      if (!mounted) return;
+      setState(() => _erreur = 'Erreur Firebase : $e');
       return;
+    } finally {
+      if (mounted) setState(() => _chargement = false);
     }
 
-    AppSession.instance.connecter(
-      codeEtab: code,
-      nomEtab: trouve.first.champs['nom'] ?? code,
-    );
-
-    if (!mounted) return;
     Navigator.of(context).pushReplacement(
       MaterialPageRoute(builder: (_) => const HomeDashboardScreen()),
     );
@@ -67,6 +79,7 @@ class _LoginEtablissementScreenState extends State<LoginEtablissementScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      bottomNavigationBar: const SafeArea(child: SignatureAuteur()),
       body: Center(
         child: Padding(
           padding: const EdgeInsets.all(24),
@@ -75,7 +88,14 @@ class _LoginEtablissementScreenState extends State<LoginEtablissementScreen> {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                const Icon(Icons.school, size: 64, color: Colors.blue),
+                Image.asset(
+                  'assets/images/logo.jpg',
+                  width: 88,
+                  height: 88,
+                  fit: BoxFit.contain,
+                  errorBuilder: (_, __, ___) =>
+                      const Icon(Icons.school, size: 64, color: Colors.blue),
+                ),
                 const SizedBox(height: 16),
                 const Text(
                   'Connexion établissement',
@@ -119,7 +139,7 @@ class _LoginEtablissementScreenState extends State<LoginEtablissementScreen> {
                   onPressed: () => Navigator.of(context).push(
                     MaterialPageRoute(builder: (_) => const LoginAdminScreen()),
                   ),
-                  child: const Text('Connexion Administration CISCO'),
+                  child: const Text('Administration CISCO Vohibato'),
                 ),
               ],
             ),
@@ -129,3 +149,5 @@ class _LoginEtablissementScreenState extends State<LoginEtablissementScreen> {
     );
   }
 }
+
+// sig:QU5UU0FOSUxBSU5BIExBTEFIIFRhdGlhbmFoIEFsc29uICgwMzQ2OTYzNTExKSBMMyBtw6ltb2lyZQ==

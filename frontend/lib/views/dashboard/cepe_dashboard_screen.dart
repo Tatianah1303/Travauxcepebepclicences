@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 
-import '../listes/listes_menu_screen.dart';
 import '../candidat/formulaire_cepe_screen.dart';
 import '../salle/formulaire_salle_screen.dart';
 import '../membre/membre_hub_screen.dart';
@@ -16,20 +15,7 @@ class CepeDashboardScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Dashboard CEPE'),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.add),
-            tooltip: 'Listes de référence (établissements...)',
-            onPressed: () => Navigator.of(context).push(
-              MaterialPageRoute(
-                builder: (_) => const ListesMenuScreen(pourCepe: true),
-              ),
-            ),
-          ),
-        ],
-      ),
+      appBar: AppBar(title: const Text('Dashboard CEPE')),
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [

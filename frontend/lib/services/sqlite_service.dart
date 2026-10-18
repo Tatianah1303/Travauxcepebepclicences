@@ -1,9 +1,5 @@
-import 'dart:io' show Platform;
-
-import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:path/path.dart';
 import 'package:sqflite/sqflite.dart';
-import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 import '../models/candidat_cepe.dart';
 import '../models/candidat_bepc.dart';
@@ -60,12 +56,6 @@ class SqliteService {
   /// ⚠️ Supprime TOUTES les données locales (candidats, membres, listes...).
   /// À utiliser seulement en phase de développement/test, jamais en prod.
   Future<void> reinitialiserBase() async {
-    if (!kIsWeb &&
-        (Platform.isWindows || Platform.isLinux || Platform.isMacOS)) {
-      sqfliteFfiInit();
-      databaseFactory = databaseFactoryFfi;
-    }
-
     if (_db != null) {
       await _db!.close();
       _db = null;
@@ -80,15 +70,9 @@ class SqliteService {
   }
 
   Future<Database> _initDatabase() async {
-    // Sur Windows/Linux/macOS (bureau), sqflite standard ne fonctionne pas :
-    // il faut basculer sur le moteur FFI, qui simule SQLite en natif.
-    // Sur Android/iOS, on garde le moteur sqflite normal (ne rien changer).
-    if (!kIsWeb &&
-        (Platform.isWindows || Platform.isLinux || Platform.isMacOS)) {
-      sqfliteFfiInit();
-      databaseFactory = databaseFactoryFfi;
-    }
-
+    // Application Android uniquement : le moteur sqflite standard suffit
+    // (le moteur FFI de bureau a été retiré pour éviter le téléchargement
+    // de sqlite3 depuis GitHub pendant le build).
     final String path = join(await getDatabasesPath(), 'gestion_examens.db');
     return openDatabase(
       path,
@@ -586,7 +570,7 @@ class SqliteService {
     if (membre == null) return;
     await modifierMembre(
       membre.copyWith(
-        etat: 'En poste',
+        etat: 'En activité',
         codeCentreEcrit: codeCentreEcrit,
         codeCentreCorrection: codeCentreCorrection,
       ),

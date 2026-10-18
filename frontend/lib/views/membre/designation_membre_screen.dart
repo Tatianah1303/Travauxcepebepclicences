@@ -3,9 +3,10 @@ import 'package:flutter/material.dart';
 import '../../models/enseignant.dart';
 import '../../models/membre_previsionnel.dart';
 import '../../models/quota_membre.dart';
-import '../../services/sqlite_service.dart';
+import '../../services/firestore_service.dart';
 import '../../services/app_session.dart';
 import '../../utils/photo_helper.dart';
+import '../../services/firebase_storage_service.dart';
 
 /// Écran principal de désignation des membres prévisionnels.
 ///
@@ -41,31 +42,40 @@ class _DesignationMembreScreenState extends State<DesignationMembreScreen> {
 
   Future<void> _charger() async {
     setState(() => _chargement = true);
-    final enseignants = await SqliteService.instance.listerEnseignants(
-      _codeEtab,
-    );
-    final quotas = await SqliteService.instance.listerQuotas(
-      codeEtab: _codeEtab,
-      anneeSession: _anneeSession,
-      typeExamen: widget.typeExamen,
-    );
-    final tousMembres = await SqliteService.instance.listerMembres(
-      anneeSession: _anneeSession,
-      typeExamen: widget.typeExamen,
-    );
+    try {
+      final enseignants = await FirestoreService.instance.listerEnseignants(
+        _codeEtab,
+      );
+      final quotas = await FirestoreService.instance.listerQuotas(
+        codeEtab: _codeEtab,
+        anneeSession: _anneeSession,
+        typeExamen: widget.typeExamen,
+      );
+      final tousMembres = await FirestoreService.instance.listerMembres(
+        codeEtab: _codeEtab,
+        anneeSession: _anneeSession,
+        typeExamen: widget.typeExamen,
+      );
 
-    // Ne garder que les membres dont l'enseignant appartient à cet établissement
-    final matriculesEtab = enseignants.map((e) => e.matricule).toSet();
-    final membresEtab = tousMembres
-        .where((m) => matriculesEtab.contains(m.matriculeEnseignant))
-        .toList();
+      // Ne garder que les membres dont l'enseignant appartient à cet établissement
+      final matriculesEtab = enseignants.map((e) => e.matricule).toSet();
+      final membresEtab = tousMembres
+          .where((m) => matriculesEtab.contains(m.matriculeEnseignant))
+          .toList();
 
-    setState(() {
-      _enseignants = enseignants;
-      _quotas = quotas;
-      _membres = membresEtab;
-      _chargement = false;
-    });
+      setState(() {
+        _enseignants = enseignants;
+        _quotas = quotas;
+        _membres = membresEtab;
+        _chargement = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _chargement = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Erreur de chargement Firestore : $e')),
+      );
+    }
   }
 
   int _quotaPourRole(String role) {
@@ -151,26 +161,61 @@ class _DesignationMembreScreenState extends State<DesignationMembreScreen> {
     final recto = await prendrePhotoOuChoisirFichier();
     if (recto == null) return;
 
-    if (!mounted) return;
+    if (!mounted) {
+      await FirebaseStorageService.supprimerPhotoTemporaire(recto);
+      return;
+    }
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text('Maintenant la photo CIN verso')),
     );
     final verso = await prendrePhotoOuChoisirFichier();
-    if (verso == null) return;
+    if (verso == null) {
+      await FirebaseStorageService.supprimerPhotoTemporaire(recto);
+      return;
+    }
+    if (!mounted) {
+      await FirebaseStorageService.supprimerPhotoTemporaire(recto);
+      await FirebaseStorageService.supprimerPhotoTemporaire(verso);
+      return;
+    }
 
-    final membre = MembrePrevisionnel(
-      codeMembre:
-          '${enseignant.matricule}_${DateTime.now().millisecondsSinceEpoch}',
-      matriculeEnseignant: enseignant.matricule,
-      role: role,
-      etat: 'Identifié',
-      photoCinRecto: recto,
-      photoCinVerso: verso,
-      anneeSession: _anneeSession,
-      typeExamen: widget.typeExamen,
-    );
+    final codeMembre =
+        '${enseignant.matricule}_${DateTime.now().millisecondsSinceEpoch}';
+    final codeEtab = AppSession.instance.codeEtab ?? '';
+    try {
+      final urlRecto = await FirebaseStorageService.envoyerPhoto(
+        cheminLocal: recto,
+        cheminCloudSansExtension: 'membres/$codeEtab/$codeMembre/cin_recto',
+      );
+      final urlVerso = await FirebaseStorageService.envoyerPhoto(
+        cheminLocal: verso,
+        cheminCloudSansExtension: 'membres/$codeEtab/$codeMembre/cin_verso',
+      );
+      final membre = MembrePrevisionnel(
+        codeMembre: codeMembre,
+        matriculeEnseignant: enseignant.matricule,
+        role: role,
+        etat: 'Identifié',
+        photoCinRecto: urlRecto,
+        photoCinVerso: urlVerso,
+        anneeSession: _anneeSession,
+        typeExamen: widget.typeExamen,
+        nom: enseignant.nom,
+        prenom: enseignant.prenom,
+        localite: enseignant.adresse,
+      );
 
-    await SqliteService.instance.insererMembre(membre);
+      await FirestoreService.instance.ajouterMembre(codeEtab, membre);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Échec de l’envoi/enregistrement des CIN : $e'),
+          ),
+        );
+      }
+      return;
+    }
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(

@@ -1,7 +1,8 @@
 import 'package:flutter/material.dart';
 
-import '../../services/local_chat_service.dart';
-import '../../services/sqlite_service.dart';
+import '../../services/firestore_chat_service.dart';
+import '../../services/firestore_listes_service.dart';
+import '../../services/listes_locales.dart';
 import 'chat_thread_screen.dart';
 
 /// Écran admin : liste de toutes les conversations avec les
@@ -26,16 +27,20 @@ class _ListeConversationsAdminScreenState
   }
 
   Future<void> _chargerNoms() async {
-    final etablissements = await SqliteService.instance.listerItems(
-      'etablissement',
-    );
-    setState(() {
-      _nomsEtab = {
-        for (final e in etablissements)
-          (e.champs['code'] ?? ''): (e.champs['nom'] ?? ''),
-      };
-      _chargement = false;
-    });
+    try {
+      final etablissements = await ListesLocales.charger('etablissement');
+      if (!mounted) return;
+      setState(() {
+        _nomsEtab = {
+          for (final e in etablissements)
+            if (e.champs['code'] != null)
+              e.champs['code']!: e.champs['nom'] ?? e.champs['code']!,
+        };
+        _chargement = false;
+      });
+    } catch (_) {
+      if (mounted) setState(() => _chargement = false);
+    }
   }
 
   @override
@@ -47,7 +52,7 @@ class _ListeConversationsAdminScreenState
     return Scaffold(
       appBar: AppBar(title: const Text('Messages des établissements')),
       body: StreamBuilder<List<Map<String, dynamic>>>(
-        stream: LocalChatService.ecouterConversations(),
+        stream: FirestoreChatService.ecouterConversations(),
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting) {
             return const Center(child: CircularProgressIndicator());
@@ -80,7 +85,7 @@ class _ListeConversationsAdminScreenState
                   overflow: TextOverflow.ellipsis,
                 ),
                 trailing: FutureBuilder<int>(
-                  future: LocalChatService.compterNonLus(
+                  future: FirestoreChatService.compterNonLus(
                     codeEtab,
                     moi: 'admin',
                   ),

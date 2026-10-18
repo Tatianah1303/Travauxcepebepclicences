@@ -4,9 +4,9 @@ import 'package:flutter/material.dart';
 import 'cepe_dashboard_screen.dart';
 import 'bepc_dashboard_screen.dart';
 import '../../services/app_session.dart';
-import '../../services/local_chat_service.dart';
+import '../../services/firestore_chat_service.dart';
 import '../../models/periode_saisie.dart';
-import '../../services/sqlite_service.dart';
+import '../../services/firestore_service.dart';
 import '../auth/login_etablissement_screen.dart';
 import '../chat/chat_thread_screen.dart';
 
@@ -210,13 +210,13 @@ class _IconeChatAvecBadgeState extends State<_IconeChatAvecBadge> {
     super.initState();
     _rafraichir();
     // Se réactualise dès qu'une conversation change (nouveau message...).
-    _abonnement = LocalChatService.ecouterConversations().listen(
+    _abonnement = FirestoreChatService.ecouterConversations().listen(
       (_) => _rafraichir(),
     );
   }
 
   Future<void> _rafraichir() async {
-    final n = await LocalChatService.compterNonLus(
+    final n = await FirestoreChatService.compterNonLus(
       widget.codeEtab,
       moi: 'etablissement',
     );
@@ -256,7 +256,7 @@ class _IconeChatAvecBadgeState extends State<_IconeChatAvecBadge> {
 
 /// Petite cloche affichant la période de saisie définie par l'admin (date
 /// de début, date de clôture, description) — évite à l'admin de devoir
-/// écrire un message individuel à chacun des 45 établissements.
+/// écrire un message individuel à chacun des établissements.
 class _ClochePeriodeSaisie extends StatefulWidget {
   const _ClochePeriodeSaisie();
 
@@ -274,7 +274,7 @@ class _ClochePeriodeSaisieState extends State<_ClochePeriodeSaisie> {
   }
 
   Future<void> _charger() async {
-    final p = await SqliteService.instance.lirePeriodeSaisie();
+    final p = await FirestoreService.instance.lirePeriodeSaisie();
     if (mounted) setState(() => _periode = p);
   }
 

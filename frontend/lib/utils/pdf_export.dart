@@ -1,13 +1,16 @@
-import 'dart:io';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
-import 'package:path_provider/path_provider.dart';
+
+import 'enregistrer_fichier.dart';
+
+export 'enregistrer_fichier.dart' show EnregistrementAnnule;
 
 /// Exporte des données en fichier .pdf, sous forme de tableau simple.
 /// Alternative à l'export Excel (.csv) — utile si Excel pose problème
 /// d'affichage sur certains postes. Les photos ne sont pas incluses.
 ///
-/// Retourne le chemin complet du fichier créé.
+/// Ouvre « Enregistrer sous » et retourne l'emplacement choisi par l'utilisateur
+/// (lève EnregistrementAnnule s'il annule).
 Future<String> exporterEnPdf({
   required String titre,
   required List<String> entetes,
@@ -39,14 +42,14 @@ Future<String> exporterEnPdf({
     ),
   );
 
-  final dossier = await getApplicationDocumentsDirectory();
-  final horodatage = DateTime.now().millisecondsSinceEpoch;
   final nomFichierSur = titre.toLowerCase().replaceAll(
     RegExp(r'[^a-z0-9]+'),
     '_',
   );
-  final fichier = File('${dossier.path}/${nomFichierSur}_$horodatage.pdf');
-  await fichier.writeAsBytes(await document.save());
 
-  return fichier.path;
+  // L'utilisateur choisit lui-même l'emplacement du fichier.
+  return enregistrerFichier(
+    nomFichier: '${nomFichierSur}_${horodatageFichier()}.pdf',
+    octets: await document.save(),
+  );
 }

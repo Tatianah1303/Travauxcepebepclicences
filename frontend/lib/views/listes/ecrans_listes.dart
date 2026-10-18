@@ -7,135 +7,148 @@ import 'gestion_liste_screen.dart';
 
 class EtablissementListeScreen extends GestionListeScreen {
   const EtablissementListeScreen({super.key})
-      : super(
-          titre: 'Établissements',
-          typeListe: 'etablissement',
-          nomsChamps: const ['code', 'nom', 'secteur'],
-        );
+    : super(
+        titre: 'Établissements',
+        typeListe: 'etablissement',
+        nomsChamps: const [
+          'code',
+          'nom',
+          'secteur',
+          'zap',
+          'centreEcrit',
+          'centreCorrection',
+        ],
+      );
 }
 
 class EcoleOrigineCepeListeScreen extends GestionListeScreen {
   const EcoleOrigineCepeListeScreen({super.key})
-      : super(
-          titre: 'Écoles d\'origine — CEPE',
-          typeListe: 'ecoleOrigineCepe',
-          nomsChamps: const ['code', 'nom', 'secteur'],
-        );
+    : super(
+        titre: 'Écoles d\'origine — CEPE',
+        typeListe: 'ecoleOrigineCepe',
+        nomsChamps: const ['code', 'nom', 'secteur', 'codeCentre'],
+      );
 }
 
 class EcoleOrigineBepcListeScreen extends GestionListeScreen {
   const EcoleOrigineBepcListeScreen({super.key})
-      : super(
-          titre: 'Écoles d\'origine — BEPC',
-          typeListe: 'ecoleOrigineBepc',
-          nomsChamps: const ['code', 'nom', 'secteur'],
-        );
+    : super(
+        titre: 'Écoles d\'origine — BEPC',
+        typeListe: 'ecoleOrigineBepc',
+        nomsChamps: const [
+          'code',
+          'nom',
+          'secteur',
+          'codeCentre',
+          'codecorrection',
+        ],
+      );
 }
 
 class CegAccueilListeScreen extends GestionListeScreen {
   const CegAccueilListeScreen({super.key})
-      : super(
-          titre: 'CEG d\'accueil (CEPE)',
-          typeListe: 'cegAccueil',
-          nomsChamps: const ['code', 'libelle'],
-        );
+    : super(
+        titre: 'CEG d\'accueil (CEPE)',
+        typeListe: 'cegAccueil',
+        nomsChamps: const ['code', 'libelle', 'codecorrection'],
+      );
 }
 
 class LyceeAccueilListeScreen extends GestionListeScreen {
   const LyceeAccueilListeScreen({super.key})
-      : super(
-          titre: 'Lycée d\'accueil (BEPC)',
-          typeListe: 'lyceeAccueil',
-          nomsChamps: const ['code', 'libelle'],
-        );
+    : super(
+        titre: 'Lycée d\'accueil (BEPC)',
+        typeListe: 'lyceeAccueil',
+        nomsChamps: const ['code', 'libelle'],
+      );
 }
 
 class CentreEcritCepeListeScreen extends GestionListeScreen {
   const CentreEcritCepeListeScreen({super.key})
-      : super(
-          titre: 'Centres d\'écrit — CEPE',
-          typeListe: 'centreEcritCepe',
-          nomsChamps: const ['code', 'libelle'],
-        );
+    : super(
+        titre: 'Centres d\'écrit — CEPE',
+        typeListe: 'centreEcritCepe',
+        nomsChamps: const ['code', 'libelle', 'codecorrection'],
+      );
 }
 
 class CentreCorrectionCepeListeScreen extends GestionListeScreen {
   const CentreCorrectionCepeListeScreen({super.key})
-      : super(
-          titre: 'Centres de correction — CEPE',
-          typeListe: 'centreCorrectionCepe',
-          nomsChamps: const ['code', 'libelle'],
-        );
+    : super(
+        titre: 'Centres de correction — CEPE',
+        typeListe: 'centreCorrectionCepe',
+        nomsChamps: const ['code', 'libelle'],
+      );
 }
 
 class CentreEcritBepcListeScreen extends GestionListeScreen {
   const CentreEcritBepcListeScreen({super.key})
-      : super(
-          titre: 'Centres d\'écrit — BEPC',
-          typeListe: 'centreEcritBepc',
-          nomsChamps: const ['code', 'libelle'],
-        );
+    : super(
+        titre: 'Centres d\'écrit — BEPC',
+        typeListe: 'centreEcritBepc',
+        nomsChamps: const ['code', 'libelle', 'codecorrection'],
+      );
 }
 
 class CentreCorrectionBepcListeScreen extends GestionListeScreen {
   const CentreCorrectionBepcListeScreen({super.key})
-      : super(
-          titre: 'Centres de correction — BEPC',
-          typeListe: 'centreCorrectionBepc',
-          nomsChamps: const ['code', 'libelle'],
-        );
+    : super(
+        titre: 'Centres de correction — BEPC',
+        typeListe: 'centreCorrectionBepc',
+        nomsChamps: const ['code', 'libelle'],
+      );
 }
 
 class GroupeCepeListeScreen extends GestionListeScreen {
   const GroupeCepeListeScreen({super.key})
-      : super(
-          titre: 'Groupes CEPE (A, B, C)',
-          typeListe: 'groupeCepe',
-          nomsChamps: const ['code', 'libelle'],
-        );
+    : super(
+        titre: 'Groupes CEPE (A, B, C)',
+        typeListe: 'groupeCepe',
+        nomsChamps: const ['code', 'libelle'],
+      );
 }
 
 class GroupeBepcListeScreen extends GestionListeScreen {
   const GroupeBepcListeScreen({super.key})
-      : super(
-          titre: 'Groupes BEPC (I, II, III)',
-          typeListe: 'groupeBepc',
-          nomsChamps: const ['code', 'libelle'],
-        );
+    : super(
+        titre: 'Groupes BEPC (I, II, III)',
+        typeListe: 'groupeBepc',
+        nomsChamps: const ['code', 'libelle'],
+      );
 }
 
 class LangueListeScreen extends GestionListeScreen {
   const LangueListeScreen({super.key})
-      : super(
-          titre: 'Langues',
-          typeListe: 'langue',
-          nomsChamps: const ['libelle'],
-        );
+    : super(
+        titre: 'Langues',
+        typeListe: 'langue',
+        nomsChamps: const ['libelle'],
+      );
 }
 
 class TypeHandicapListeScreen extends GestionListeScreen {
   const TypeHandicapListeScreen({super.key})
-      : super(
-          titre: 'Types de handicap',
-          typeListe: 'typeHandicap',
-          nomsChamps: const ['libelle'],
-        );
+    : super(
+        titre: 'Types de handicap',
+        typeListe: 'typeHandicap',
+        nomsChamps: const ['libelle'],
+      );
 }
 
 class SportCollectifListeScreen extends GestionListeScreen {
   const SportCollectifListeScreen({super.key})
-      : super(
-          titre: 'Sports collectifs',
-          typeListe: 'sportCollectif',
-          nomsChamps: const ['libelle'],
-        );
+    : super(
+        titre: 'Sports collectifs',
+        typeListe: 'sportCollectif',
+        nomsChamps: const ['libelle'],
+      );
 }
 
 class SportIndividuelListeScreen extends GestionListeScreen {
   const SportIndividuelListeScreen({super.key})
-      : super(
-          titre: 'Sports individuels',
-          typeListe: 'sportIndividuel',
-          nomsChamps: const ['libelle'],
-        );
+    : super(
+        titre: 'Sports individuels',
+        typeListe: 'sportIndividuel',
+        nomsChamps: const ['libelle'],
+      );
 }

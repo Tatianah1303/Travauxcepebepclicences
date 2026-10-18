@@ -1,0 +1,43 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    function estConnecte() { return request.auth != null; }
+    function estAdmin() {
+      return estConnecte() && request.auth.token.email != null &&
+        request.auth.token.email in ['atiadmin@gmail.com', 'edgsadmin@gmail.com'];
+    }
+    function estMonEtablissement(codeEtab) {
+      return estConnecte() && request.auth.token.email != null &&
+        request.auth.token.email.split('@')[0] == codeEtab;
+    }
+    function peutLire(codeEtab) { return estAdmin() || estMonEtablissement(codeEtab); }
+    function peutEnvoyer(codeEtab) {
+      return peutLire(codeEtab) && request.resource.size < 10 * 1024 * 1024 &&
+        request.resource.contentType.matches('image/.*');
+    }
+
+    match /candidats/{codeEtab}/{fichiers=**} {
+      allow read: if peutLire(codeEtab);
+      allow create, update: if peutEnvoyer(codeEtab);
+      allow delete: if peutLire(codeEtab);
+    }
+    match /membres/{codeEtab}/{fichiers=**} {
+      allow read: if peutLire(codeEtab);
+      allow create, update: if peutEnvoyer(codeEtab);
+      allow delete: if peutLire(codeEtab);
+    }
+    match /chat/{codeEtab}/{fichiers=**} {
+      allow read: if peutLire(codeEtab);
+      allow create, update: if peutEnvoyer(codeEtab);
+      allow delete: if peutLire(codeEtab);
+    }
+    match /archives/{fichiers=**} {
+      allow read: if estAdmin();
+      allow create, update: if estAdmin() &&
+        request.resource.size < 100 * 1024 * 1024 &&
+        request.resource.contentType == 'application/zip';
+      allow delete: if estAdmin();
+    }
+    match /{tout=**} { allow read, write: if false; }
+  }
+}

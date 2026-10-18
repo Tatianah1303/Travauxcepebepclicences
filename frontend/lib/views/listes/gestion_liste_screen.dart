@@ -1,7 +1,8 @@
 import 'package:flutter/material.dart';
 
 import '../../models/item_liste.dart';
-import '../../services/sqlite_service.dart';
+import '../../services/firestore_listes_service.dart';
+import '../../services/seed_service.dart';
 
 /// Traduit un code de secteur brut (venant du fichier Excel) en libellé
 /// lisible par l'utilisateur. Règle : 0 = Public, 1 = Privé, 2 = Libre.
@@ -44,6 +45,7 @@ class GestionListeScreen extends StatefulWidget {
 class _GestionListeScreenState extends State<GestionListeScreen> {
   List<ItemListe> _items = [];
   String _recherche = '';
+  String? _zapFiltre;
 
   @override
   void initState() {
@@ -52,15 +54,24 @@ class _GestionListeScreenState extends State<GestionListeScreen> {
   }
 
   Future<void> _rafraichir() async {
-    final items = await SqliteService.instance.listerItems(widget.typeListe);
+    try {
+      await SeedService.assurerType(widget.typeListe);
+    } catch (_) {
+      // Pas admin / pas de connexion : on affiche ce qui est en ligne.
+    }
+    final items = await FirestoreListesService.listerItems(widget.typeListe);
+    if (!mounted) return;
     setState(() => _items = items);
   }
 
   List<ItemListe> get _itemsFiltres {
-    if (_recherche.trim().isEmpty) return _items;
     final q = _recherche.toLowerCase();
     return _items.where((item) {
-      return item.champs.values.any((v) => v.toLowerCase().contains(q));
+      final zapOk = _zapFiltre == null || item.champs['zap'] == _zapFiltre;
+      final texteOk =
+          q.isEmpty ||
+          item.champs.values.any((v) => v.toLowerCase().contains(q));
+      return zapOk && texteOk;
     }).toList();
   }
 
@@ -248,15 +259,15 @@ class _GestionListeScreenState extends State<GestionListeScreen> {
     );
 
     if (existant == null) {
-      await SqliteService.instance.insererItemListe(item);
+      await FirestoreListesService.insererItemListe(item);
     } else {
-      await SqliteService.instance.modifierItemListe(item);
+      await FirestoreListesService.modifierItemListe(item);
     }
     await _rafraichir();
   }
 
   Future<void> _supprimer(ItemListe item) async {
-    await SqliteService.instance.supprimerItemListe(item.id);
+    await FirestoreListesService.supprimerItemListe(item.id);
     await _rafraichir();
   }
 
@@ -275,6 +286,35 @@ class _GestionListeScreenState extends State<GestionListeScreen> {
       ),
       body: Column(
         children: [
+          if (widget.typeListe == 'etablissement')
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
+              child: DropdownButtonFormField<String>(
+                value: _zapFiltre,
+                decoration: const InputDecoration(
+                  labelText: 'Filtrer par ZAP',
+                  border: OutlineInputBorder(),
+                ),
+                items: <DropdownMenuItem<String>>[
+                  const DropdownMenuItem<String>(
+                    value: null,
+                    child: Text('Toutes les ZAP'),
+                  ),
+                  ...(_items
+                          .map((e) => e.champs['zap'])
+                          .whereType<String>()
+                          .where((z) => z.isNotEmpty)
+                          .toSet()
+                          .toList()
+                        ..sort())
+                      .map(
+                        (z) =>
+                            DropdownMenuItem<String>(value: z, child: Text(z)),
+                      ),
+                ],
+                onChanged: (z) => setState(() => _zapFiltre = z),
+              ),
+            ),
           Padding(
             padding: const EdgeInsets.all(12),
             child: TextField(

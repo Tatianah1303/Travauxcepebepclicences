@@ -4,7 +4,9 @@ import '../../models/enseignant.dart';
 import '../../models/item_liste.dart';
 import '../../models/membre_previsionnel.dart';
 import '../../models/quota_membre.dart';
-import '../../services/sqlite_service.dart';
+import '../../services/firestore_service.dart';
+import '../../services/firestore_listes_service.dart';
+import '../../services/listes_locales.dart';
 import '../../services/app_session.dart';
 import '../../widgets/searchable_dropdown.dart';
 
@@ -46,42 +48,41 @@ class _AttributionCentreMembreScreenState
   }
 
   Future<void> _charger() async {
-    setState(() => _chargement = true);
-
-    final enseignants = await SqliteService.instance.listerEnseignants(
-      _codeEtab,
-    );
-    final matriculesEtab = enseignants.map((e) => e.matricule).toSet();
-
-    final tousMembres = await SqliteService.instance.listerMembres(
-      anneeSession: _anneeSession,
-      typeExamen: widget.typeExamen,
-    );
-    final membresEtab = tousMembres
-        .where((m) => matriculesEtab.contains(m.matriculeEnseignant))
-        .toList();
-
-    final typeListeEcrit = widget.typeExamen == 'CEPE'
-        ? 'centreEcritCepe'
-        : 'centreEcritBepc';
-    final typeListeCorrection = widget.typeExamen == 'CEPE'
-        ? 'centreCorrectionCepe'
-        : 'centreCorrectionBepc';
-
-    final centresEcrit = await SqliteService.instance.listerItems(
-      typeListeEcrit,
-    );
-    final centresCorrection = await SqliteService.instance.listerItems(
-      typeListeCorrection,
-    );
-
-    setState(() {
-      _enseignants = enseignants;
-      _membres = membresEtab;
-      _centresEcrit = centresEcrit;
-      _centresCorrection = centresCorrection;
-      _chargement = false;
-    });
+    if (mounted) setState(() => _chargement = true);
+    try {
+      final enseignants = await FirestoreService.instance.listerEnseignants(
+        _codeEtab,
+      );
+      final membresEtab = await FirestoreService.instance.listerMembres(
+        codeEtab: _codeEtab,
+        anneeSession: _anneeSession,
+        typeExamen: widget.typeExamen,
+      );
+      final typeListeEcrit = widget.typeExamen == 'CEPE'
+          ? 'centreEcritCepe'
+          : 'centreEcritBepc';
+      final typeListeCorrection = widget.typeExamen == 'CEPE'
+          ? 'centreCorrectionCepe'
+          : 'centreCorrectionBepc';
+      final centresEcrit = await ListesLocales.charger(typeListeEcrit);
+      final centresCorrection = await ListesLocales.charger(
+        typeListeCorrection,
+      );
+      if (!mounted) return;
+      setState(() {
+        _enseignants = enseignants;
+        _membres = membresEtab;
+        _centresEcrit = centresEcrit;
+        _centresCorrection = centresCorrection;
+        _chargement = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _chargement = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Erreur de chargement Firestore : $e')),
+      );
+    }
   }
 
   Enseignant? _enseignantDe(String matricule) {
@@ -130,7 +131,7 @@ class _AttributionCentreMembreScreenState
     // empêcher l'utilisateur de le changer ensuite séparément.
     final codeCentreCorrectionDeduit = _centreCorrectionDeduit(codeCentreEcrit);
 
-    await SqliteService.instance.placerMembreEnPoste(
+    await FirestoreService.instance.attribuerCentresMembre(
       codeMembre: membre.codeMembre,
       codeCentreEcrit: codeCentreEcrit,
       codeCentreCorrection: codeCentreCorrectionDeduit,
@@ -157,8 +158,9 @@ class _AttributionCentreMembreScreenState
     );
     if (choix == null) return;
 
-    await SqliteService.instance.placerMembreEnPoste(
+    await FirestoreService.instance.attribuerCentresMembre(
       codeMembre: membre.codeMembre,
+      codeCentreEcrit: membre.codeCentreEcrit,
       codeCentreCorrection: choix.champs['code'],
     );
 
@@ -250,7 +252,7 @@ class _AttributionCentreMembreScreenState
                                     ),
                                   ),
                                   Text(
-                                    '${libelleRole(m.role)} — ${m.etat}',
+                                    '${libelleRole(m.role)} — ${m.etatAffiche}',
                                     style: TextStyle(
                                       fontSize: 12,
                                       color: Colors.grey.shade600,

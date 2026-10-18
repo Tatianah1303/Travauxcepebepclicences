@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../services/app_session.dart';
-import '../../services/sqlite_service.dart';
+import '../../services/firestore_service.dart';
 
 class StatistiquesExamenScreen extends StatefulWidget {
   final bool pourCepe;
@@ -25,9 +25,15 @@ class _StatistiquesExamenScreenState extends State<StatistiquesExamenScreen> {
 
   Future<void> _charger() async {
     final String? codeEtab = AppSession.instance.codeEtab;
+    if (codeEtab == null || codeEtab.isEmpty) {
+      if (mounted) setState(() => _chargement = false);
+      return;
+    }
     final List<Map<String, dynamic>> tous;
     if (widget.pourCepe) {
-      final candidats = await SqliteService.instance.listerCandidatsCepe();
+      final candidats = await FirestoreService.instance.listerCandidatsCepe(
+        codeEtab: codeEtab,
+      );
       tous = candidats
           .map(
             (c) => <String, dynamic>{
@@ -38,7 +44,9 @@ class _StatistiquesExamenScreenState extends State<StatistiquesExamenScreen> {
           )
           .toList();
     } else {
-      final candidats = await SqliteService.instance.listerCandidatsBepc();
+      final candidats = await FirestoreService.instance.listerCandidatsBepc(
+        codeEtab: codeEtab,
+      );
       tous = candidats
           .map(
             (c) => <String, dynamic>{

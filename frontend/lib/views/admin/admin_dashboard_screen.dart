@@ -1,117 +1,79 @@
 import 'package:flutter/material.dart';
-import 'package:fl_chart/fl_chart.dart';
 
 import '../../models/quota_membre.dart';
 import '../../models/item_liste.dart';
-import '../../services/sqlite_service.dart';
+import '../../services/firestore_service.dart';
 import '../../services/admin_session.dart';
 import '../../services/archive_service.dart';
-import '../../utils/csv_export.dart';
-import '../../widgets/searchable_dropdown.dart';
+import '../../services/firebase_auth_service.dart';
+import '../../services/firestore_listes_service.dart';
+import '../../services/listes_locales.dart';
+import '../../models/periode_saisie.dart';
+import '../../services/seed_service.dart';
+import '../../utils/enregistrer_fichier.dart';
 import 'login_admin_screen.dart';
 import '../chat/liste_conversation_admin_screen.dart';
 import 'listes_admin_screen.dart';
+import '../listes/listes_menu_screen.dart';
 import '../admin/peridode_saisie_screen.dart';
 
-/// Dashboard de l'Administration CISCO : rôle purement consultatif.
-/// - 3 catégories (Candidats CEPE, Candidats BEPC, Membres prévisionnels)
-///   avec export Excel national.
-/// - Tableau des membres par rôle et par établissement.
-/// - Statistiques en bâtonnets (candidats par examen, membres par rôle,
-///   candidats par sexe), filtrables par établissement (réservé à l'admin).
-/// - Archivage et clôture de session : exporte tout en .zip puis vide
-///   la base pour l'année suivante.
 class AdminDashboardScreen extends StatefulWidget {
   const AdminDashboardScreen({super.key});
-
   @override
   State<AdminDashboardScreen> createState() => _AdminDashboardScreenState();
 }
 
 class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
-  int _totalCepe = 0;
-  int _totalBepc = 0;
-  int _totalMembres = 0;
-  int _cepeNonAttribues = 0;
-  int _bepcNonAttribues = 0;
-  Map<String, String> _nomsEtab = {};
   List<ItemListe> _listeEtablissements = [];
-  List<_LigneRoleEtab> _tableauRolesCepe = [];
-  List<_LigneRoleEtab> _tableauRolesBepc = [];
 
-  // Données brutes pour les statistiques (non filtrées) — le filtre
-  // s'applique au moment de l'affichage des graphiques.
   List<Map<String, dynamic>> _candidatsCepeRaw = [];
   List<Map<String, dynamic>> _candidatsBepcRaw = [];
   List<Map<String, dynamic>> _membresRaw = [];
 
-  String? _etabFiltre; // null = tous les établissements
+  String? _zapFiltre;
   bool _chargement = true;
   bool _archivageEnCours = false;
 
-  int get _anneeSession => DateTime.now().year;
+  void _message(String titre, String texte) {
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(titre),
+        content: Text(texte),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('OK'),
+          ),
+        ],
+      ),
+    );
+  }
 
   @override
   void initState() {
     super.initState();
+    SeedService.semerSiVide().catchError((_) {});
     _charger();
   }
 
   Future<void> _charger() async {
     setState(() => _chargement = true);
 
-    final cepe = await SqliteService.instance.listerCandidatsCepe();
-    final bepc = await SqliteService.instance.listerCandidatsBepc();
-    final membres = await SqliteService.instance.listerMembres();
-    final enseignants = await SqliteService.instance.listerTousEnseignants();
-    final etablissements = await SqliteService.instance.listerItems(
-      'etablissement',
-    );
+    final cepe = await FirestoreService.instance.listerTousCandidatsCepe();
+    final bepc = await FirestoreService.instance.listerTousCandidatsBepc();
+    final membres = await FirestoreService.instance.listerTousMembres();
+    final enseignants = await FirestoreService.instance.listerTousEnseignants();
+    final listeItems = await ListesLocales.charger('etablissement');
 
-    final nomsEtab = {
-      for (final e in etablissements)
-        (e.champs['code'] ?? ''): (e.champs['nom'] ?? ''),
-    };
     final etabDeMatricule = {
       for (final e in enseignants) e.matricule: e.codeEtab,
     };
     final sexeDeMatricule = {for (final e in enseignants) e.matricule: e.sexe};
 
-    final Map<String, Map<String, int>> compteCepe = {};
-    final Map<String, Map<String, int>> compteBepc = {};
-    for (final m in membres) {
-      final codeEtab = etabDeMatricule[m.matriculeEnseignant];
-      if (codeEtab == null) continue;
-      final compte = m.typeExamen == 'BEPC' ? compteBepc : compteCepe;
-      compte.putIfAbsent(codeEtab, () => {for (final r in rolesMembre) r: 0});
-      compte[codeEtab]![m.role] = (compte[codeEtab]![m.role] ?? 0) + 1;
-    }
-
-    List<_LigneRoleEtab> construireTableau(Map<String, Map<String, int>> c) =>
-        c.entries
-            .map(
-              (entry) => _LigneRoleEtab(
-                codeEtab: entry.key,
-                nomEtab: nomsEtab[entry.key] ?? entry.key,
-                parRole: entry.value,
-              ),
-            )
-            .toList()
-          ..sort((a, b) => a.nomEtab.compareTo(b.nomEtab));
-
-    final tableauCepe = construireTableau(compteCepe);
-    final tableauBepc = construireTableau(compteBepc);
-
+    if (!mounted) return;
     setState(() {
-      _totalCepe = cepe.length;
-      _totalBepc = bepc.length;
-      _cepeNonAttribues = cepe.where((c) => c.codeCentreEcrit == null).length;
-      _bepcNonAttribues = bepc.where((c) => c.codeCentreEcrit == null).length;
-      _totalMembres = membres.length;
-      _nomsEtab = nomsEtab;
-      _listeEtablissements = etablissements;
-      _tableauRolesCepe = tableauCepe;
-      _tableauRolesBepc = tableauBepc;
+      _listeEtablissements = listeItems;
       _candidatsCepeRaw = cepe
           .map((c) => {'codeEtab': c.codeEtab, 'sexe': c.sexe})
           .toList();
@@ -121,7 +83,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
       _membresRaw = membres
           .map(
             (m) => {
-              'codeEtab': etabDeMatricule[m.matriculeEnseignant],
+              'codeEtab': m.codeEtab ?? etabDeMatricule[m.matriculeEnseignant],
               'role': m.role,
               'sexe': sexeDeMatricule[m.matriculeEnseignant],
               'typeExamen': m.typeExamen,
@@ -132,152 +94,9 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     });
   }
 
-  // --------------------------------------------------------------------
-  //  Exports Excel — filtrés sur l'établissement sélectionné uniquement
-  //  (jamais la liste globale/nationale affichée dans le dashboard)
-  // --------------------------------------------------------------------
-
-  Future<void> _exporterCepe() async {
-    if (_etabFiltre == null) {
-      _confirmer('Choisissez d\'abord un établissement à exporter');
-      return;
-    }
-    final cepe = (await SqliteService.instance.listerCandidatsCepe())
-        .where((c) => c.codeEtab == _etabFiltre)
-        .toList();
-    final nomEtab = _nomsEtab[_etabFiltre] ?? _etabFiltre!;
-    final chemin = await exporterEnCsv(
-      nomFichier: 'candidats_cepe_$nomEtab',
-      entetes: const [
-        'Établissement',
-        'Nom',
-        'Prénom',
-        'Sexe',
-        'Groupe',
-        'État',
-      ],
-      lignes: cepe
-          .map(
-            (c) => [
-              _nomsEtab[c.codeEtab] ?? c.codeEtab,
-              c.nom,
-              c.prenom,
-              c.sexe,
-              c.groupe,
-              c.etatCandidat,
-            ],
-          )
-          .toList(),
-    );
-    _confirmer('Exporté : $chemin');
-  }
-
-  Future<void> _exporterBepc() async {
-    if (_etabFiltre == null) {
-      _confirmer('Choisissez d\'abord un établissement à exporter');
-      return;
-    }
-    final bepc = (await SqliteService.instance.listerCandidatsBepc())
-        .where((c) => c.codeEtab == _etabFiltre)
-        .toList();
-    final nomEtab = _nomsEtab[_etabFiltre] ?? _etabFiltre!;
-    final chemin = await exporterEnCsv(
-      nomFichier: 'candidats_bepc_$nomEtab',
-      entetes: const [
-        'Établissement',
-        'Nom',
-        'Prénom',
-        'Sexe',
-        'Groupe',
-        'Langue',
-        'Née vers',
-        'État',
-      ],
-      lignes: bepc
-          .map(
-            (c) => [
-              _nomsEtab[c.codeEtab] ?? c.codeEtab,
-              c.nom,
-              c.prenom,
-              c.sexe,
-              c.groupe,
-              c.langue ?? '-',
-              '${c.neeVert}',
-              c.etatCandidat,
-            ],
-          )
-          .toList(),
-    );
-    _confirmer('Exporté : $chemin');
-  }
-
-  Future<void> _exporterMembres(String typeExamen) async {
-    if (_etabFiltre == null) {
-      _confirmer('Choisissez d\'abord un établissement à exporter');
-      return;
-    }
-    final enseignants = await SqliteService.instance.listerTousEnseignants();
-    final parMatricule = {for (final e in enseignants) e.matricule: e};
-    final membres =
-        (await SqliteService.instance.listerMembres(typeExamen: typeExamen))
-            .where(
-              (m) =>
-                  parMatricule[m.matriculeEnseignant]?.codeEtab == _etabFiltre,
-            )
-            .toList();
-
-    // Seulement les centres du type d'examen concerné (pas de mélange
-    // CEPE/BEPC dans les noms de centres retrouvés).
-    final tousCentresEcrit = await SqliteService.instance.listerItems(
-      typeExamen == 'CEPE' ? 'centreEcritCepe' : 'centreEcritBepc',
-    );
-    final tousCentresCorrection = await SqliteService.instance.listerItems(
-      typeExamen == 'CEPE' ? 'centreCorrectionCepe' : 'centreCorrectionBepc',
-    );
-
-    String libelleDe(String? code, List<ItemListe> centres) {
-      if (code == null) return 'Non attribué';
-      try {
-        return centres
-                .firstWhere((c) => c.champs['code'] == code)
-                .champs['libelle'] ??
-            code;
-      } catch (_) {
-        return code;
-      }
-    }
-
-    final nomEtab = _nomsEtab[_etabFiltre] ?? _etabFiltre!;
-    final chemin = await exporterEnCsv(
-      nomFichier: 'membres_${typeExamen.toLowerCase()}_$nomEtab',
-      entetes: const [
-        'Établissement',
-        'Nom',
-        'Prénom',
-        'Sexe',
-        'Fonction',
-        'Rôle',
-        'État',
-        'Centre d\'écrit',
-        'Centre de correction',
-      ],
-      lignes: membres.map((m) {
-        final e = parMatricule[m.matriculeEnseignant];
-        return [
-          e != null ? (_nomsEtab[e.codeEtab] ?? e.codeEtab) : '-',
-          e?.nom ?? '-',
-          e?.prenom ?? '-',
-          e?.sexe ?? '-',
-          e?.fonction ?? '-',
-          libelleRole(m.role),
-          m.etat,
-          libelleDe(m.codeCentreEcrit, tousCentresEcrit),
-          libelleDe(m.codeCentreCorrection, tousCentresCorrection),
-        ];
-      }).toList(),
-    );
-    _confirmer('Exporté : $chemin');
-  }
+  String _fmtDate(DateTime d) =>
+      '${d.day.toString().padLeft(2, '0')}/'
+      '${d.month.toString().padLeft(2, '0')}/${d.year}';
 
   void _confirmer(String message) {
     if (!mounted) return;
@@ -286,20 +105,46 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     ).showSnackBar(SnackBar(content: Text(message)));
   }
 
-  // --------------------------------------------------------------------
-  //  Archivage et clôture de session
-  // --------------------------------------------------------------------
-
   Future<void> _archiverEtCloturer() async {
+    // La clôture n'est possible qu'APRÈS la date de fin de la période de saisie.
+    PeriodeSaisie? periode;
+    try {
+      periode = await FirestoreService.instance.lirePeriodeSaisie();
+    } catch (e) {
+      _message(
+        'Clôture impossible',
+        'Impossible de lire la période de saisie : $e',
+      );
+      return;
+    }
+    if (!mounted) return;
+    if (periode == null) {
+      _message(
+        'Clôture impossible',
+        'Aucune période de saisie n’est définie. Définissez-la d’abord (menu ⋮ → '
+            'Période de saisie) : la clôture n’est possible qu’après sa date de fin.',
+      );
+      return;
+    }
+    if (periode.statut != StatutSaisie.termine) {
+      _message(
+        'Clôture impossible pour le moment',
+        'La clôture de la session ne sera possible qu’après la date de fin de la '
+            'période de saisie : ${_fmtDate(periode.dateFin)}.',
+      );
+      return;
+    }
+    final annee = periode.dateFin.year;
+
     final confirme = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('Archiver et clôturer la session ?'),
         content: Text(
-          'Toutes les données de la session $_anneeSession (candidats CEPE, '
-          'BEPC et membres prévisionnels) vont être exportées dans un fichier '
-          '.zip, PUIS SUPPRIMÉES de la base pour préparer la session suivante.\n\n'
-          'Cette action est irréversible localement. Continuer ?',
+          'Un ZIP sera d’abord enregistré à l’emplacement que vous choisirez, puis les données '
+          'actives de la session $annee (candidats, membres, salles, quotas et attributions de salles) seront supprimées de Firestore, '
+          'pour l’administration comme pour tous les établissements. '
+          'Cette action est irréversible. Continuer ?',
         ),
         actions: [
           TextButton(
@@ -317,29 +162,24 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
         ],
       ),
     );
-
     if (confirme != true) return;
-
     setState(() => _archivageEnCours = true);
-    final cheminZip = await ArchiveService.archiverEtCloturerSession(
-      _anneeSession,
-    );
-    setState(() => _archivageEnCours = false);
-
-    if (!mounted) return;
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text('Session archivée : $cheminZip')));
-    await _charger();
-  }
-
-  // --------------------------------------------------------------------
-  //  Statistiques filtrées par établissement
-  // --------------------------------------------------------------------
-
-  List<Map<String, dynamic>> _filtrer(List<Map<String, dynamic>> liste) {
-    if (_etabFiltre == null) return [];
-    return liste.where((e) => e['codeEtab'] == _etabFiltre).toList();
+    try {
+      final urlArchive = await ArchiveService.archiverEtCloturerSession(annee);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Archive enregistrée : $urlArchive')),
+      );
+      await _charger();
+    } on EnregistrementAnnule catch (e) {
+      _confirmer('$e');
+    } catch (e) {
+      _confirmer(
+        'Échec de l’archivage : $e. Vérifiez l’archive et l’état des données dans Firebase avant de recommencer.',
+      );
+    } finally {
+      if (mounted) setState(() => _archivageEnCours = false);
+    }
   }
 
   void _deconnexion() {
@@ -349,21 +189,88 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     );
   }
 
+  Future<void> _changerMotDePasse() async {
+    final controleur = TextEditingController();
+    final confirmation = TextEditingController();
+    final nouveauMdp = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Changer le mot de passe admin'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: controleur,
+              obscureText: true,
+              decoration: const InputDecoration(
+                labelText: 'Nouveau mot de passe',
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: confirmation,
+              obscureText: true,
+              decoration: const InputDecoration(
+                labelText: 'Confirmer le mot de passe',
+                border: OutlineInputBorder(),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('Annuler'),
+          ),
+          FilledButton(
+            onPressed: () {
+              if (controleur.text.length < 6) {
+                ScaffoldMessenger.of(ctx).showSnackBar(
+                  const SnackBar(content: Text('Minimum 6 caractères')),
+                );
+                return;
+              }
+              if (controleur.text != confirmation.text) {
+                ScaffoldMessenger.of(ctx).showSnackBar(
+                  const SnackBar(
+                    content: Text(
+                      'Les deux mots de passe ne correspondent pas',
+                    ),
+                  ),
+                );
+                return;
+              }
+              Navigator.of(ctx).pop(controleur.text);
+            },
+            child: const Text('Valider'),
+          ),
+        ],
+      ),
+    );
+    if (nouveauMdp == null) return;
+    try {
+      await FirebaseAuthService.changerMotDePasseAdmin(nouveauMdp);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Mot de passe modifié avec succès'),
+          backgroundColor: Colors.green,
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Erreur : $e')));
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_chargement) {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
-
-    final cepeF = _filtrer(_candidatsCepeRaw);
-    final bepcF = _filtrer(_candidatsBepcRaw);
-    final membresF = _filtrer(_membresRaw);
-    final membresCepeF = membresF
-        .where((m) => m['typeExamen'] == 'CEPE')
-        .toList();
-    final membresBepcF = membresF
-        .where((m) => m['typeExamen'] == 'BEPC')
-        .toList();
 
     return Scaffold(
       backgroundColor: const Color(0xFFF4F6F9),
@@ -397,15 +304,45 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                     builder: (_) => const PeriodeSaisieScreen(),
                   ),
                 );
+              } else if (valeur == 'references_cepe') {
+                Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (_) => const ListesMenuScreen(pourCepe: true),
+                  ),
+                );
+              } else if (valeur == 'references_bepc') {
+                Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (_) => const ListesMenuScreen(pourCepe: false),
+                  ),
+                );
               } else if (valeur == 'listes') {
                 Navigator.of(context).push(
                   MaterialPageRoute(builder: (_) => const ListesAdminScreen()),
                 );
               } else if (valeur == 'deconnexion') {
                 _deconnexion();
+              } else if (valeur == 'motdepasse') {
+                _changerMotDePasse();
               }
             },
             itemBuilder: (ctx) => const [
+              PopupMenuItem(
+                value: 'references_cepe',
+                child: ListTile(
+                  leading: Icon(Icons.dataset),
+                  title: Text('Référentiels CEPE'),
+                  contentPadding: EdgeInsets.zero,
+                ),
+              ),
+              PopupMenuItem(
+                value: 'references_bepc',
+                child: ListTile(
+                  leading: Icon(Icons.dataset),
+                  title: Text('Référentiels BEPC'),
+                  contentPadding: EdgeInsets.zero,
+                ),
+              ),
               PopupMenuItem(
                 value: 'periode',
                 child: ListTile(
@@ -419,6 +356,15 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                 child: ListTile(
                   leading: Icon(Icons.list_alt),
                   title: Text('Voir les listes'),
+                  contentPadding: EdgeInsets.zero,
+                ),
+              ),
+              PopupMenuDivider(),
+              PopupMenuItem(
+                value: 'motdepasse',
+                child: ListTile(
+                  leading: Icon(Icons.lock_reset),
+                  title: Text('Changer le mot de passe'),
                   contentPadding: EdgeInsets.zero,
                 ),
               ),
@@ -443,30 +389,31 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
         child: ListView(
           padding: const EdgeInsets.all(16),
           children: [
-            // --- Sélection de l'établissement : obligatoire avant de voir
-            // les statistiques (point 4 de la demande). ---
-            Card(
-              elevation: 1,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
+            DropdownButtonFormField<String>(
+              value: _zapFiltre,
+              decoration: const InputDecoration(
+                labelText: 'Filtrer par ZAP',
+                border: OutlineInputBorder(),
+                prefixIcon: Icon(Icons.location_on),
               ),
-              child: Padding(
-                padding: const EdgeInsets.all(12),
-                child: SearchableDropdown<ItemListe>(
-                  label: 'Établissement',
-                  icone: Icons.filter_alt,
-                  items: _listeEtablissements,
-                  libelleDe: (e) => e.champs['nom'] ?? e.champs['code'] ?? '',
-                  valeurDe: (e) => e.champs['code'],
-                  valeurSelectionnee: _etabFiltre,
-                  onSelectionner: (e) =>
-                      setState(() => _etabFiltre = e?.champs['code']),
+              items: <DropdownMenuItem<String>>[
+                const DropdownMenuItem<String>(
+                  value: null,
+                  child: Text('Toutes les ZAP'),
                 ),
-              ),
+                ...(_listeEtablissements
+                        .map((e) => e.champs['zap'])
+                        .whereType<String>()
+                        .where((z) => z.isNotEmpty)
+                        .toSet()
+                        .toList()
+                      ..sort())
+                    .map(
+                      (z) => DropdownMenuItem<String>(value: z, child: Text(z)),
+                    ),
+              ],
+              onChanged: (z) => setState(() => _zapFiltre = z),
             ),
-
-            // --- Répartition des établissements par secteur (statistique
-            // globale, indépendante de l'établissement sélectionné). ---
             const SizedBox(height: 12),
             Builder(
               builder: (context) {
@@ -509,151 +456,40 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                 );
               },
             ),
-
-            if (_etabFiltre == null) ...[
-              const SizedBox(height: 40),
-              Center(
-                child: Column(
-                  children: [
-                    Icon(
-                      Icons.touch_app,
-                      size: 48,
-                      color: Colors.grey.shade400,
-                    ),
-                    const SizedBox(height: 12),
-                    Text(
-                      'Choisissez un établissement ci-dessus\npour afficher ses statistiques',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(color: Colors.grey.shade600),
-                    ),
-                  ],
-                ),
-              ),
-            ] else ...[
-              const SizedBox(height: 16),
-              const Text(
-                'Statistiques de l’établissement sélectionné',
-                style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-              ),
-              const SizedBox(height: 12),
-              Row(
-                children: [
-                  Expanded(
-                    child: _carteStat(
-                      titre: 'Candidats CEPE',
-                      valeur: cepeF.length,
-                      couleur: Colors.blue,
-                      icone: Icons.school,
-                      onExporter: _exporterCepe,
-                      garcons: cepeF.where((c) => c['sexe'] == 'G').length,
-                      filles: cepeF.where((c) => c['sexe'] == 'F').length,
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: _carteStat(
-                      titre: 'Candidats BEPC',
-                      valeur: bepcF.length,
-                      couleur: Colors.teal,
-                      icone: Icons.menu_book,
-                      onExporter: _exporterBepc,
-                      garcons: bepcF.where((c) => c['sexe'] == 'G').length,
-                      filles: bepcF.where((c) => c['sexe'] == 'F').length,
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 12),
-              Row(
-                children: [
-                  Expanded(
-                    child: _carteStat(
-                      titre: 'Membres CEPE',
-                      valeur: membresCepeF.length,
-                      couleur: Colors.purple,
-                      icone: Icons.badge,
-                      onExporter: () => _exporterMembres('CEPE'),
-                      garcons: membresCepeF
-                          .where((m) => m['sexe'] == 'G')
-                          .length,
-                      filles: membresCepeF
-                          .where((m) => m['sexe'] == 'F')
-                          .length,
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: _carteStat(
-                      titre: 'Membres BEPC',
-                      valeur: membresBepcF.length,
-                      couleur: Colors.deepPurple,
-                      icone: Icons.badge,
-                      onExporter: () => _exporterMembres('BEPC'),
-                      garcons: membresBepcF
-                          .where((m) => m['sexe'] == 'G')
-                          .length,
-                      filles: membresBepcF
-                          .where((m) => m['sexe'] == 'F')
-                          .length,
-                    ),
-                  ),
-                ],
-              ),
-
-              if (_cepeNonAttribues > 0 || _bepcNonAttribues > 0) ...[
-                const SizedBox(height: 16),
-                Card(
-                  color: Colors.orange.shade50,
-                  child: Padding(
-                    padding: const EdgeInsets.all(14),
-                    child: Row(
-                      children: [
-                        Icon(
-                          Icons.warning_amber,
-                          color: Colors.orange.shade800,
-                        ),
-                        const SizedBox(width: 10),
-                        Expanded(
-                          child: Text(
-                            'Candidats pas encore attribués à un centre d\'écrit : '
-                            '$_cepeNonAttribues (CEPE), $_bepcNonAttribues (BEPC).',
-                            style: TextStyle(color: Colors.orange.shade900),
-                          ),
-                        ),
-                      ],
-                    ),
+            const SizedBox(height: 16),
+            if (_zapFiltre == null)
+              Padding(
+                padding: const EdgeInsets.only(top: 24),
+                child: Center(
+                  child: Column(
+                    children: [
+                      Icon(
+                        Icons.touch_app,
+                        size: 48,
+                        color: Colors.grey.shade400,
+                      ),
+                      const SizedBox(height: 12),
+                      Text(
+                        'Choisissez une ZAP ci-dessus\npour afficher les statistiques de ses établissements',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(color: Colors.grey.shade600),
+                      ),
+                    ],
                   ),
                 ),
-              ],
-
-              const SizedBox(height: 28),
-              const Text(
-                'Membres CEPE par rôle',
-                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              )
+            else ...[
+              Text(
+                'ZAP $_zapFiltre — ${_etablissementsDeLaZap.length} établissement(s)',
+                style: const TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                ),
               ),
               const SizedBox(height: 12),
-              _tableauParRole(_tableauRolesCepe),
-
-              const SizedBox(height: 24),
-              const Text(
-                'Membres BEPC par rôle',
-                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-              ),
-              const SizedBox(height: 12),
-              _tableauParRole(_tableauRolesBepc),
-
-              const SizedBox(height: 28),
-              const Text(
-                'Statistiques (graphiques)',
-                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-              ),
-              const SizedBox(height: 12),
-
-              _graphiqueCandidatsParExamen(cepeF.length, bepcF.length),
-              const SizedBox(height: 20),
-              _graphiqueCandidatsParSexe(cepeF, bepcF),
+              for (final etab in _etablissementsDeLaZap)
+                _blocEtablissement(etab),
             ],
-
             const SizedBox(height: 32),
             Card(
               color: Colors.red.shade50,
@@ -671,9 +507,9 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                     ),
                     const SizedBox(height: 6),
                     Text(
-                      'Archive toutes les données de la session $_anneeSession en .zip, '
-                      'puis les supprime pour préparer la session suivante (CEPE et BEPC).',
-                      style: const TextStyle(color: Colors.black87),
+                      'Disponible seulement après la date de fin de la période de saisie. '
+                      'Archive les données de la session en .zip, puis les supprime '
+                      '(listes de l’administration et des établissements) pour préparer la session suivante.',
                     ),
                     const SizedBox(height: 12),
                     SizedBox(
@@ -738,118 +574,51 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     );
   }
 
-  Widget _tableauParRole(List<_LigneRoleEtab> lignes) {
-    final filtrees = lignes.where((l) => l.codeEtab == _etabFiltre).toList();
-    return Card(
-      child: filtrees.isEmpty
-          ? const Padding(
-              padding: EdgeInsets.all(20),
-              child: Text('Aucun membre désigné pour le moment'),
-            )
-          : SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: DataTable(
-                columns: [
-                  const DataColumn(label: Text('ÉTABLISSEMENT')),
-                  ...rolesMembre.map(
-                    (r) =>
-                        DataColumn(label: Text(libelleRole(r).toUpperCase())),
-                  ),
-                  const DataColumn(label: Text('TOTAL')),
-                ],
-                rows: filtrees
-                    .map(
-                      (ligne) => DataRow(
-                        cells: [
-                          DataCell(Text(ligne.nomEtab)),
-                          ...rolesMembre.map(
-                            (r) => DataCell(Text('${ligne.parRole[r] ?? 0}')),
-                          ),
-                          DataCell(
-                            Text(
-                              '${ligne.parRole.values.fold(0, (a, b) => a + b)}',
-                              style: const TextStyle(
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    )
-                    .toList(),
-              ),
-            ),
+  List<ItemListe> get _etablissementsDeLaZap {
+    final liste = _listeEtablissements
+        .where((e) => e.champs['zap'] == _zapFiltre)
+        .toList();
+    liste.sort(
+      (a, b) => (a.champs['nom'] ?? '').compareTo(b.champs['nom'] ?? ''),
     );
+    return liste;
   }
 
-  Widget _carteStat({
-    required String titre,
-    required int valeur,
-    required Color couleur,
-    required IconData icone,
-    required VoidCallback onExporter,
-    bool pleineLargeur = false,
-    int? garcons,
-    int? filles,
-  }) {
+  /// Carte d'un établissement : son nom, puis le nombre de candidats
+  /// (garçons / filles) CEPE et BEPC, puis les membres par rôle.
+  Widget _blocEtablissement(ItemListe etab) {
+    final code = etab.champs['code'];
+    final nom = etab.champs['nom'] ?? code ?? '';
+    final cepe = _candidatsCepeRaw.where((c) => c['codeEtab'] == code).toList();
+    final bepc = _candidatsBepcRaw.where((c) => c['codeEtab'] == code).toList();
+    final membres = _membresRaw.where((m) => m['codeEtab'] == code).toList();
+
     return Card(
-      elevation: 2,
+      elevation: 1,
+      margin: const EdgeInsets.only(bottom: 12),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       child: Padding(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.all(14),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Row(
-              children: [
-                CircleAvatar(
-                  backgroundColor: couleur,
-                  child: Icon(icone, color: Colors.white, size: 20),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Text(
-                    titre,
-                    style: const TextStyle(fontWeight: FontWeight.w600),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
             Text(
-              '$valeur',
-              style: TextStyle(
-                fontSize: 32,
-                fontWeight: FontWeight.bold,
-                color: couleur,
-              ),
+              nom,
+              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
             ),
-            if (garcons != null && filles != null) ...[
-              const SizedBox(height: 4),
-              Wrap(
-                spacing: 10,
-                runSpacing: 2,
-                children: [
-                  Text(
-                    'Garçons : $garcons',
-                    style: TextStyle(fontSize: 12, color: Colors.grey.shade700),
-                  ),
-                  Text(
-                    'Filles : $filles',
-                    style: TextStyle(fontSize: 12, color: Colors.grey.shade700),
-                  ),
-                ],
-              ),
-            ],
-            const SizedBox(height: 8),
-            SizedBox(
-              width: double.infinity,
-              child: OutlinedButton.icon(
-                onPressed: onExporter,
-                icon: const Icon(Icons.file_download, size: 18),
-                label: const Text('Exporter Excel'),
-                style: OutlinedButton.styleFrom(foregroundColor: couleur),
-              ),
+            const Divider(height: 20),
+            _ligneCandidats('Candidats CEPE', cepe, Colors.blue),
+            const SizedBox(height: 10),
+            _ligneCandidats('Candidats BEPC', bepc, Colors.teal),
+            _blocRoles(
+              'Membres CEPE',
+              membres.where((m) => m['typeExamen'] == 'CEPE').toList(),
+              Colors.purple,
+            ),
+            _blocRoles(
+              'Membres BEPC',
+              membres.where((m) => m['typeExamen'] == 'BEPC').toList(),
+              Colors.deepPurple,
             ),
           ],
         ),
@@ -857,135 +626,79 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     );
   }
 
-  /// Bâtonnets : nombre de candidats inscrits, CEPE vs BEPC.
-  Widget _graphiqueCandidatsParExamen(int cepe, int bepc) {
-    final total = (cepe + bepc) == 0 ? 1 : (cepe + bepc);
-    return _carteGraphique(
-      titre: 'Candidats inscrits (CEPE vs BEPC)',
-      barGroups: [
-        _barre(0, cepe.toDouble(), Colors.blue),
-        _barre(1, bepc.toDouble(), Colors.teal),
-      ],
-      labels: [
-        'CEPE\n${(cepe / total * 100).toStringAsFixed(0)}%',
-        'BEPC\n${(bepc / total * 100).toStringAsFixed(0)}%',
-      ],
-      maxY: [cepe, bepc].reduce((a, b) => a > b ? a : b).toDouble() + 2,
-    );
-  }
-
-  /// Bâtonnets : candidats (CEPE+BEPC) par sexe.
-  Widget _graphiqueCandidatsParSexe(
-    List<Map<String, dynamic>> cepe,
-    List<Map<String, dynamic>> bepc,
+  Widget _ligneCandidats(
+    String titre,
+    List<Map<String, dynamic>> candidats,
+    Color couleur,
   ) {
-    final tous = [...cepe, ...bepc];
-    final garcons = tous.where((c) => c['sexe'] == 'G').length;
-    final filles = tous.where((c) => c['sexe'] == 'F').length;
-    final total = tous.isEmpty ? 1 : tous.length;
-    return _carteGraphique(
-      titre: 'Candidats par sexe',
-      barGroups: [
-        _barre(0, garcons.toDouble(), Colors.indigo),
-        _barre(1, filles.toDouble(), Colors.pink),
-      ],
-      labels: [
-        'Garçons\n${(garcons / total * 100).toStringAsFixed(0)}%',
-        'Filles\n${(filles / total * 100).toStringAsFixed(0)}%',
-      ],
-      maxY: [garcons, filles].reduce((a, b) => a > b ? a : b).toDouble() + 2,
-    );
-  }
-
-  BarChartGroupData _barre(int x, double valeur, Color couleur) {
-    return BarChartGroupData(
-      x: x,
-      barRods: [
-        BarChartRodData(
-          toY: valeur,
-          color: couleur,
-          width: 28,
-          borderRadius: BorderRadius.circular(4),
+    final garcons = candidats.where((c) => c['sexe'] == 'G').length;
+    final filles = candidats.where((c) => c['sexe'] == 'F').length;
+    return Row(
+      children: [
+        Expanded(
+          child: Text(
+            '$titre (${candidats.length})',
+            style: TextStyle(fontWeight: FontWeight.w600, color: couleur),
+          ),
         ),
+        Text('Garçons : $garcons'),
+        const SizedBox(width: 14),
+        Text('Filles : $filles'),
       ],
     );
   }
 
-  Widget _carteGraphique({
-    required String titre,
-    required List<BarChartGroupData> barGroups,
-    required List<String> labels,
-    required double maxY,
-  }) {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              titre,
-              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
-            ),
-            const SizedBox(height: 16),
-            SizedBox(
-              height: 200,
-              child: BarChart(
-                BarChartData(
-                  maxY: maxY,
-                  barGroups: barGroups,
-                  gridData: const FlGridData(show: false),
-                  borderData: FlBorderData(show: false),
-                  titlesData: FlTitlesData(
-                    leftTitles: const AxisTitles(
-                      sideTitles: SideTitles(
-                        showTitles: true,
-                        reservedSize: 30,
-                      ),
-                    ),
-                    rightTitles: const AxisTitles(
-                      sideTitles: SideTitles(showTitles: false),
-                    ),
-                    topTitles: const AxisTitles(
-                      sideTitles: SideTitles(showTitles: false),
-                    ),
-                    bottomTitles: AxisTitles(
-                      sideTitles: SideTitles(
-                        showTitles: true,
-                        getTitlesWidget: (value, meta) {
-                          final i = value.toInt();
-                          if (i < 0 || i >= labels.length)
-                            return const SizedBox.shrink();
-                          return Padding(
-                            padding: const EdgeInsets.only(top: 6),
-                            child: Text(
-                              labels[i],
-                              textAlign: TextAlign.center,
-                              style: const TextStyle(fontSize: 11),
-                            ),
-                          );
-                        },
-                        reservedSize: 40,
-                      ),
-                    ),
+  /// Membres par rôle : seuls les rôles qui ont au moins un membre sont
+  /// affichés ; si aucun membre, la section n'apparaît pas.
+  Widget _blocRoles(
+    String titre,
+    List<Map<String, dynamic>> membres,
+    Color couleur,
+  ) {
+    final Map<String, int> parRole = {};
+    for (final m in membres) {
+      final role = '${m['role']}';
+      parRole[role] = (parRole[role] ?? 0) + 1;
+    }
+    if (parRole.isEmpty) return const SizedBox.shrink();
+
+    final roles = [
+      ...rolesMembre.where(parRole.containsKey),
+      ...parRole.keys.where((r) => !rolesMembre.contains(r)),
+    ];
+    return Padding(
+      padding: const EdgeInsets.only(top: 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            '$titre (${membres.length})',
+            style: TextStyle(fontWeight: FontWeight.w600, color: couleur),
+          ),
+          const SizedBox(height: 6),
+          Wrap(
+            spacing: 8,
+            runSpacing: 6,
+            children: [
+              for (final r in roles)
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 4,
+                  ),
+                  decoration: BoxDecoration(
+                    color: couleur.withValues(alpha: 0.08),
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: Text(
+                    '${libelleRole(r)} : ${parRole[r]}',
+                    style: TextStyle(fontSize: 12, color: couleur),
                   ),
                 ),
-              ),
-            ),
-          ],
-        ),
+            ],
+          ),
+        ],
       ),
     );
   }
-}
-
-class _LigneRoleEtab {
-  final String codeEtab;
-  final String nomEtab;
-  final Map<String, int> parRole;
-  _LigneRoleEtab({
-    required this.codeEtab,
-    required this.nomEtab,
-    required this.parRole,
-  });
 }

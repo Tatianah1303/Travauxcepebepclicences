@@ -31,6 +31,12 @@ class Enseignant {
 
   String get nomComplet => '$nom $prenom';
 
+  /// Un enseignant peut être enregistré sans matricule : un identifiant
+  /// interne (commençant par « sans_ ») est alors généré. On n'affiche
+  /// jamais cet identifiant.
+  bool get aUnMatricule => !matricule.startsWith('sans_');
+  String get matriculeAffiche => aUnMatricule ? matricule : '-';
+
   Map<String, Object?> toMap() => {
     'matricule': matricule,
     'nom': nom,

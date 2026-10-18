@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../models/quota_membre.dart';
-import '../../services/sqlite_service.dart';
+import '../../services/firestore_service.dart';
 import '../../services/app_session.dart';
 
 /// L'établissement fixe ici combien de membres il prévoit de fournir pour
@@ -46,7 +46,7 @@ class _QuotaMembreScreenState extends State<QuotaMembreScreen> {
   }
 
   Future<void> _charger() async {
-    final quotas = await SqliteService.instance.listerQuotas(
+    final quotas = await FirestoreService.instance.listerQuotas(
       codeEtab: _codeEtab,
       anneeSession: _anneeSession,
       typeExamen: widget.typeExamen,
@@ -60,7 +60,7 @@ class _QuotaMembreScreenState extends State<QuotaMembreScreen> {
   Future<void> _enregistrer() async {
     setState(() => _enregistrement = true);
     for (final role in rolesMembre) {
-      await SqliteService.instance.definirQuota(
+      await FirestoreService.instance.definirQuota(
         QuotaMembre(
           codeEtab: _codeEtab,
           anneeSession: _anneeSession,

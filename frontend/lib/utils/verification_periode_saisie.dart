@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../models/periode_saisie.dart';
-import '../services/sqlite_service.dart';
+import '../services/firestore_service.dart';
 
 /// Vérifie si la saisie est actuellement autorisée (période définie par
 /// l'admin). Si elle est bloquée (pas encore commencée ou déjà clôturée),
@@ -12,7 +12,7 @@ import '../services/sqlite_service.dart';
 /// toujours autorisée (comportement historique, pas de blocage par
 /// défaut).
 Future<bool> saisieAutorisee(BuildContext context) async {
-  final periode = await SqliteService.instance.lirePeriodeSaisie();
+  final periode = await FirestoreService.instance.lirePeriodeSaisie();
   if (periode == null) return true;
   if (periode.statut == StatutSaisie.enCours) return true;
 

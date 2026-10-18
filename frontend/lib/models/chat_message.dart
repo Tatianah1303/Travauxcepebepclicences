@@ -15,7 +15,7 @@ class ChatMessage {
   final DateTime horodatage;
   final bool lu;
 
-  /// Chemin local d'une photo jointe (optionnel).
+  /// URL Firebase Storage d'une photo jointe (optionnel; champ historique conservé).
   final String? photoPath;
 
   /// true si le message a été modifié après son envoi.
@@ -55,9 +55,13 @@ class ChatMessage {
     id: map['id'] as String,
     expediteur: map['expediteur'] as String,
     texte: map['texte'] as String,
-    horodatage: DateTime.parse(map['horodatage'] as String),
-    lu: (map['lu'] as int) == 1,
+    horodatage: map['horodatage'] is DateTime
+        ? map['horodatage'] as DateTime
+        : map['horodatage'] is String
+        ? DateTime.parse(map['horodatage'] as String)
+        : (map['horodatage'] as dynamic).toDate() as DateTime,
+    lu: map['lu'] == true || map['lu'] == 1,
     photoPath: map['photoPath'] as String?,
-    modifie: (map['modifie'] as int?) == 1,
+    modifie: map['modifie'] == true || map['modifie'] == 1,
   );
 }
